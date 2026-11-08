@@ -30,6 +30,17 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AccessTime
+import androidx.compose.material.icons.rounded.Business
+import androidx.compose.material.icons.rounded.CalendarToday
+import androidx.compose.material.icons.rounded.Category
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Theaters
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Movie
@@ -198,7 +209,9 @@ private data class MovieDetails(
     val writers: String,
     val cast: List<String>,
     val companies: String,
-    val seasons: String
+    val seasons: String,
+    val producers: String,
+    val creators: String
 )
 
 private suspend fun tmdb(path: String): JSONObject = withContext(Dispatchers.IO) {
@@ -256,11 +269,14 @@ private suspend fun loadMovieDetails(movie: Movie): MovieDetails {
         if (minutes > 0) "${minutes / 60} ч ${minutes % 60} мин" else "Не указано"
     }
     val seasons = if (movie.mediaType == "tv") "${data.optInt("number_of_seasons")} сез., ${data.optInt("number_of_episodes")} сер." else ""
+    val producers = crewNames("Producer").ifBlank { crewNames("Executive Producer") }
+    val creatorsArray = data.optJSONArray("created_by") ?: JSONArray()
+    val creators = (0 until creatorsArray.length()).mapNotNull { creatorsArray.optJSONObject(it)?.optString("name") }.joinToString(", ")
     return MovieDetails(
         data.optString("tagline"), genres, runtime, data.optString("status"),
         data.optString("original_title").ifBlank { data.optString("original_name") },
         country, crewNames("Director").ifBlank { crewNames("Director of Photography") },
-        crewNames("Writer").ifBlank { crewNames("Screenplay") }, cast, companies, seasons
+        crewNames("Writer").ifBlank { crewNames("Screenplay") }, cast, companies, seasons, producers, creators
     )
 }
 
@@ -454,19 +470,25 @@ private fun MovieDetailScreen(
                 if (loading) {
                     Text("Загружаем подробную информацию…", color = Muted)
                 } else if (details != null) {
-                    if (details.genres.isNotEmpty()) InfoLine("Жанры", details.genres.joinToString(" • "))
-                    InfoLine("Оригинальное название", details.originalTitle)
-                    InfoLine("Дата выхода", movie.date)
-                    InfoLine("Статус", details.status)
-                    InfoLine("Длительность", details.runtime)
-                    if (details.seasons.isNotBlank()) InfoLine("Сезоны и серии", details.seasons)
-                    InfoLine("Страна", details.country)
-                    InfoLine("Режиссёр", details.director)
-                    InfoLine("Сценарий", details.writers)
-                    InfoLine("Студии", details.companies)
+                    if (details.genres.isNotEmpty()) InfoLine("Жанры", details.genres.joinToString(" • "), Icons.Rounded.Category)
+                    InfoLine("Оригинальное название", details.originalTitle, Icons.Rounded.Language)
+                    InfoLine("Дата выхода", movie.date, Icons.Rounded.CalendarToday)
+                    InfoLine("Статус", details.status, Icons.Rounded.Info)
+                    InfoLine("Длительность", details.runtime, Icons.Rounded.AccessTime)
+                    if (details.seasons.isNotBlank()) InfoLine("Сезоны и серии", details.seasons, Icons.Rounded.Theaters)
+                    InfoLine("Страна", details.country, Icons.Rounded.Public)
+                    InfoLine("Режиссёр", details.director, Icons.Rounded.Person)
+                    InfoLine("Сценарий", details.writers, Icons.Rounded.Edit)
+                    InfoLine("Продюсеры", details.producers, Icons.Rounded.Groups)
+                    InfoLine("Создатели", details.creators, Icons.Rounded.Person)
+                    InfoLine("Студии", details.companies, Icons.Rounded.Business)
                     Spacer(Modifier.height(18.dp))
                     if (details.cast.isNotEmpty()) {
-                        Text("В ролях", color = White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Groups, contentDescription = null, tint = White, modifier = Modifier.size(21.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("В ролях", color = White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        }
                         Spacer(Modifier.height(10.dp))
                         Text(details.cast.joinToString("  •  "), color = Muted, fontSize = 14.sp, lineHeight = 22.sp)
                     }
@@ -479,11 +501,13 @@ private fun MovieDetailScreen(
 }
 
 @Composable
-private fun InfoLine(label: String, value: String) {
+private fun InfoLine(label: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
     if (value.isNotBlank()) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
-            Text(label, color = Muted, fontSize = 13.sp, modifier = Modifier.widthIn(min = 118.dp, max = 150.dp))
+        Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.Top) {
+            Icon(icon, contentDescription = null, tint = Muted, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
+            Text(label, color = Muted, fontSize = 13.sp, modifier = Modifier.widthIn(min = 112.dp, max = 145.dp))
+            Spacer(Modifier.width(8.dp))
             Text(value, color = White, fontSize = 13.sp, modifier = Modifier.weight(1f))
         }
     }
