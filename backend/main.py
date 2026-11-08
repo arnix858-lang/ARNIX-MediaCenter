@@ -136,6 +136,10 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
 
     file = files[0]
     filename = str(file.get("name") or "")
+    stream_url = "https://archive.org/download/{}/{}".format(
+        quote(identifier, safe=""),
+        quote(filename, safe="/"),
+    )
 
     # Prefer explicit audio-track metadata. A filename is only a hint, not proof
     # that the selected file actually contains that language.
@@ -148,10 +152,13 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
     if not audio_language:
         # Inspect audio-stream container tags (when present) as a stronger signal
         # than the filename. This does not use speech recognition.
-        detected = await asyncio.wait_for(
-            asyncio.to_thread(_probe_audio_track_language, stream_url),
-            timeout=10.0,
-        )
+        try:
+            detected = await asyncio.wait_for(
+                asyncio.to_thread(_probe_audio_track_language, stream_url),
+                timeout=10.0,
+            )
+        except asyncio.TimeoutError:
+            detected = None
         if detected:
             audio_language = detected
 
@@ -180,10 +187,6 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
         language_label = "Язык аудио не подтверждён"
         language_verified = False
         language_evidence = "unknown"
-    stream_url = "https://archive.org/download/{}/{}".format(
-        quote(identifier, safe=""),
-        quote(filename, safe="/"),
-    )
     # Probe only the first byte so unavailable or non-video links are filtered
     # without downloading the full movie.
     try:
