@@ -186,7 +186,8 @@ private fun ArnixPlayerScreen(title: String, voiceName: String, episode: Playbac
         player.addListener(listener)
         onDispose { player.removeListener(listener); player.release() }
     }
-    LaunchedEffect(player) {
+    val exoPlayer = player
+    LaunchedEffect(exoPlayer) {
         while (true) {
             position = player.currentPosition.coerceAtLeast(0L)
             duration = player.duration.coerceAtLeast(0L)
@@ -205,7 +206,7 @@ private fun ArnixPlayerScreen(title: String, voiceName: String, episode: Playbac
         Box(Modifier.fillMaxWidth().weight(1f).background(Color.Black), contentAlignment = Alignment.Center) {
             AndroidView(factory = { ctx ->
                 PlayerView(ctx).apply {
-                    player = player
+                    this.player = exoPlayer
                     useController = false
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
