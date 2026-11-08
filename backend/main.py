@@ -17,7 +17,7 @@ ARCHIVE_METADATA = "https://archive.org/metadata/{}"
 app = FastAPI(
     title="ARNIX Universal Stream Engine",
     description="Search for openly licensed media with direct playback URLs.",
-    version="3.3.1",
+    version="3.4.0",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -75,6 +75,97 @@ def _video_files(metadata: dict) -> list[dict]:
     return files
 
 
+def _mp4_boxes(data: bytes, start: int = 0, end: int | None = None):
+    """Iterate ISO-BMFF boxes safely within a byte buffer."""
+    end = len(data) if end is None else min(end, len(data))
+    pos = start
+    while pos + 8 <= end:
+        size = int.from_bytes(data[pos:pos + 4], "big")
+        kind = data[pos + 4:pos + 8]
+        header = 8
+        if size == 1 and pos + 16 <= end:
+            size = int.from_bytes(data[pos + 8:pos + 16], "big")
+            header = 16
+        elif size == 0:
+            size = end - pos
+        if size < header or pos + size > end:
+            break
+        yield kind, pos + header, pos + size
+        pos += size
+
+
+def _mp4_audio_languages(data: bytes) -> list[str]:
+    """Read ISO-639 language codes from mdhd boxes belonging to audio tracks."""
+    found = []
+    for kind, box_start, box_end in _mp4_boxes(data):
+        if kind != b"moov":
+            continue
+        for trak_kind, trak_start, trak_end in _mp4_boxes(data, box_start, box_end):
+            if trak_kind != b"trak":
+                continue
+            mdia = next(((s, e) for k, s, e in _mp4_boxes(data, trak_start, trak_end) if k == b"mdia"), None)
+            if not mdia:
+                continue
+            mdia_start, mdia_end = mdia
+            children = list(_mp4_boxes(data, mdia_start, mdia_end))
+            handler = next(((s, e) for k, s, e in children if k == b"hdlr"), None)
+            mdhd = next(((s, e) for k, s, e in children if k == b"mdhd"), None)
+            if not handler or not mdhd:
+                continue
+            hs, he = handler
+            if he - hs < 12 or data[hs + 8:hs + 12] != b"soun":
+                continue
+            ms, me = mdhd
+            if me - ms < 24:
+                continue
+            version = data[ms]
+            language_offset = ms + (32 if version == 1 else 20)
+            if language_offset + 2 > me:
+                continue
+            packed = int.from_bytes(data[language_offset:language_offset + 2], "big")
+            if packed == 0:
+                continue
+            code = "".join(chr(((packed >> shift) & 0x1F) + 0x60) for shift in (10, 5, 0))
+            if re.fullmatch(r"[a-z]{3}", code) and code not in {"und", "xxx"}:
+                found.append(code)
+    return list(dict.fromkeys(found))
+
+
+async def _detect_mp4_audio_language(client: httpx.AsyncClient, url: str) -> tuple[str | None, str | None]:
+    """Inspect a bounded MP4 header range; no PyAV/FFmpeg dependency or full download."""
+    try:
+        async with client.stream(
+            "GET", url, headers={"Range": "bytes=0-16777215"}, follow_redirects=True
+        ) as response:
+            if response.status_code not in {200, 206}:
+                return None, None
+            content_type = response.headers.get("content-type", "").lower()
+            if content_type and not any(x in content_type for x in ("video/", "octet-stream", "application/mp4")):
+                return None, None
+            chunks = []
+            total = 0
+            async for chunk in response.aiter_bytes():
+                remaining = 16 * 1024 * 1024 - total
+                if remaining <= 0:
+                    break
+                chunk = chunk[:remaining]
+                chunks.append(chunk)
+                total += len(chunk)
+                if total >= 16 * 1024 * 1024:
+                    break
+            codes = _mp4_audio_languages(b"".join(chunks))
+            for code in codes:
+                if code in {"rus", "ru"}:
+                    return "ru", "mp4_mdhd_audio_track"
+                if code in {"eng", "en"}:
+                    return "en", "mp4_mdhd_audio_track"
+            if codes:
+                return codes[0], "mp4_mdhd_audio_track"
+    except (httpx.HTTPError, ValueError, IndexError):
+        pass
+    return None, None
+
+
 async def _archive_search(client: httpx.AsyncClient, title: str):
     params = {
         "q": f'title:({title}) AND mediatype:movies',
@@ -115,8 +206,8 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
         quote(filename, safe="/"),
     )
 
-    # Prefer explicit audio-track metadata. A filename is only a hint, not proof
-    # that the selected file actually contains that language.
+    # Prefer container-level audio track tags, then explicit Archive metadata.
+    detected_language, detected_evidence = await _detect_mp4_audio_language(client, stream_url)
     audio_language = str(
         metadata.get("audio_language")
         or metadata.get("audio languages")
@@ -124,7 +215,17 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
     ).strip().lower()
     filename_lower = filename.lower()
 
-    if audio_language in {"russian", "ru", "русский", "русская", "rus"}:
+    if detected_language in {"ru", "rus"}:
+        language_code = "ru"
+        language_label = "Русская аудиодорожка (тег MP4)"
+        language_verified = True
+        language_evidence = detected_evidence
+    elif detected_language in {"en", "eng"}:
+        language_code = "en"
+        language_label = "English audio (MP4 track tag)"
+        language_verified = True
+        language_evidence = detected_evidence
+    elif audio_language in {"russian", "ru", "русский", "русская", "rus"}:
         language_code = "ru"
         language_label = "Русская аудиодорожка (указана источником)"
         language_verified = True
@@ -133,13 +234,13 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
         language_code = "en"
         language_label = "English audio (указана источником)"
         language_verified = True
-        language_evidence = audio_evidence
-    elif re.search(r"(^|[._\s-])(english|eng)([._\s-]|$)", filename_lower):
+        language_evidence = "source_audio_metadata"
+    elif re.search(r"(^|[._\\s-])(english|eng)([._\\s-]|$)", filename_lower):
         language_code = "en"
         language_label = "English (по названию файла; аудиодорожка не проверена)"
         language_verified = False
         language_evidence = "filename_hint"
-    elif re.search(r"(^|[._\s-])(russian|rus)([._\s-]|$)", filename_lower):
+    elif re.search(r"(^|[._\\s-])(russian|rus)([._\\s-]|$)", filename_lower):
         language_code = "ru"
         language_label = "Русский (по названию файла; аудиодорожка не проверена)"
         language_verified = False
@@ -208,7 +309,7 @@ async def playback(
             timeout=timeout,
             limits=limits,
             follow_redirects=True,
-            headers={"User-Agent": "ARNIX-MediaCenter/3.3.1 (open-media search)"},
+            headers={"User-Agent": "ARNIX-MediaCenter/3.4.0 (open-media search)"},
         ) as client:
             docs = await _archive_search(client, title)
             results = await asyncio.gather(
@@ -255,7 +356,7 @@ async def playback(
             "sources": [best["source"]],
             "results_count": 1,
             "alternatives_found": max(0, len(items) - 1),
-            "note": "Доступность видеопотока проверяется перед выдачей. Язык подтверждается по тегам аудиодорожки, если они присутствуют; иначе используется только подсказка из имени файла.",
+            "note": "Доступность видеопотока проверяется перед выдачей. Язык определяется по тегу аудиодорожки MP4, если он доступен в заголовке контейнера; иначе используются метаданные источника или неподтверждённая подсказка из имени файла.",
         }
     except httpx.HTTPError as exc:
         logger.warning("Provider request failed: %s", exc)
