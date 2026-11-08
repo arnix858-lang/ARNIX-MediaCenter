@@ -96,10 +96,10 @@ async def playback(
     except Exception as exc:
         logger.exception("HDRezka playback lookup failed")
         trace = traceback.format_exc().strip().splitlines()
-        location = trace[-2] if len(trace) > 1 else "unknown location"
+        diagnostic = "\\n".join(trace[-8:])
         raise HTTPException(
             status_code=502,
-            detail=f"HDRezka connector error: {exc.__class__.__name__}: {exc}; at {location}",
+            detail=f"HDRezka connector error: {exc.__class__.__name__}: {exc}\\n{diagnostic}",
         ) from exc
 
 
