@@ -17,7 +17,7 @@ ARCHIVE_METADATA = "https://archive.org/metadata/{}"
 app = FastAPI(
     title="ARNIX Universal Stream Engine",
     description="Search for openly licensed media with direct playback URLs.",
-    version="3.1.0",
+    version="3.2.0",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -108,35 +108,76 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
     if not files:
         return None
 
-    # The catalog's "language" field describes the item, not necessarily its audio track.
-    # Never claim a Russian or English voice unless the source explicitly labels audio language.
+    file = files[0]
+    filename = str(file.get("name") or "")
+
+    # Prefer explicit audio-track metadata. A filename is only a hint, not proof
+    # that the selected file actually contains that language.
     audio_language = str(
         metadata.get("audio_language")
         or metadata.get("audio languages")
         or ""
-    ).lower()
+    ).strip().lower()
+    filename_lower = filename.lower()
     if audio_language in {"russian", "ru", "русский", "русская"}:
         language_code = "ru"
         language_label = "Русская аудиодорожка (указана источником)"
+        language_verified = True
+        language_evidence = "source_audio_metadata"
     elif audio_language in {"english", "en", "английский", "английская"}:
         language_code = "en"
-        language_label = "English audio (declared by source)"
+        language_label = "English audio (указана источником)"
+        language_verified = True
+        language_evidence = "source_audio_metadata"
+    elif re.search(r"(^|[._\\s-])(english|eng)([._\\s-]|$)", filename_lower):
+        language_code = "en"
+        language_label = "English (по названию файла; аудиодорожка не проверена)"
+        language_verified = False
+        language_evidence = "filename_hint"
+    elif re.search(r"(^|[._\\s-])(russian|rus)([._\\s-]|$)", filename_lower):
+        language_code = "ru"
+        language_label = "Русский (по названию файла; аудиодорожка не проверена)"
+        language_verified = False
+        language_evidence = "filename_hint"
     else:
         language_code = "und"
         language_label = "Язык аудио не подтверждён"
-
-    file = files[0]
-    filename = str(file.get("name") or "")
+        language_verified = False
+        language_evidence = "unknown"
     stream_url = "https://archive.org/download/{}/{}".format(
         quote(identifier, safe=""),
         quote(filename, safe="/"),
     )
+    # Probe only the first byte so unavailable or non-video links are filtered
+    # without downloading the full movie.
+    try:
+        async with client.stream(
+            "GET",
+            stream_url,
+            headers={"Range": "bytes=0-0"},
+            follow_redirects=True,
+        ) as probe:
+            if probe.status_code not in {200, 206}:
+                return None
+            content_type = probe.headers.get("content-type", "").lower()
+            if content_type and not any(
+                marker in content_type
+                for marker in ("video/", "application/octet-stream", "application/mp4")
+            ):
+                return None
+            async for _ in probe.aiter_bytes():
+                break
+    except httpx.HTTPError:
+        return None
+
     return {
         "id": identifier,
         "title": title,
         "year": metadata.get("year") or doc.get("year"),
         "language": language_code,
         "language_label": language_label,
+        "language_verified": language_verified,
+        "language_evidence": language_evidence,
         "url": stream_url,
         "source": "Internet Archive",
         "license": metadata.get("licenseurl") or metadata.get("rights"),
@@ -166,7 +207,7 @@ async def playback(
             timeout=timeout,
             limits=limits,
             follow_redirects=True,
-            headers={"User-Agent": "ARNIX-MediaCenter/3.1 (open-media search)"},
+            headers={"User-Agent": "ARNIX-MediaCenter/3.2 (open-media search)"},
         ) as client:
             docs = await _archive_search(client, title)
             results = await asyncio.gather(
@@ -203,7 +244,8 @@ async def playback(
                 "url": best["url"],
                 "source": best["source"],
                 "license": best["license"],
-                "language_verified": best["language"] in {"ru", "en"},
+                "language_verified": best["language_verified"],
+                "language_evidence": best["language_evidence"],
             }],
         }
         return {
@@ -212,7 +254,7 @@ async def playback(
             "sources": [best["source"]],
             "results_count": 1,
             "alternatives_found": max(0, len(items) - 1),
-            "note": "Показан один лучший совпадающий файл. Язык аудио указан только при наличии явного поля audio_language в метаданных источника; иначе он помечен как неподтверждённый.",
+            "note": "Проверена доступность прямого видеопотока. Язык помечается подтверждённым только по метаданным аудио; название файла даёт лишь предварительную подсказку.",
         }
     except httpx.HTTPError as exc:
         logger.warning("Provider request failed: %s", exc)
