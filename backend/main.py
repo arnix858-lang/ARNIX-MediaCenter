@@ -34,7 +34,7 @@ def score_title(query: str, candidate: str) -> float:
 @app.get("/api/playback")
 async def playback(
     title: str = Query(min_length=1, max_length=180),
-    type: str = Query(default="movie", pattern="^(movie|tv)$"),
+    media_type: str = Query(default="movie", alias="type", pattern="^(movie|tv)$"),
 ):
     """Find a title and expose its available translation/episode choices."""
     try:
@@ -46,7 +46,7 @@ async def playback(
             ranked = sorted(items, key=lambda item: score_title(title, item.name), reverse=True)
             player = None
             item = None
-            wanted_type = "tv_series" if type == "tv" else "movie"
+            wanted_type = "tv_series" if media_type == "tv" else "movie"
             for candidate in ranked:
                 candidate_player = await client.player(candidate.url)
                 if candidate_player.post.type == wanted_type:
