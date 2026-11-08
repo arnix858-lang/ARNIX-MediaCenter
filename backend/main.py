@@ -1,19 +1,23 @@
-import os
+import asyncio
 import logging
-from urllib.parse import urlparse, urlencode
+import re
+from urllib.parse import quote
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
-from HdRezkaApi import HdRezkaApi
-from HdRezkaApi.search import HdRezkaSearch
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("arnix.hdrezka")
-HDREZKA_HOST = os.getenv("HDREZKA_HOST", "https://rezka.ag/").rstrip("/") + "/"
-ALLOWED_HOST = urlparse(HDREZKA_HOST).hostname
+logger = logging.getLogger("arnix.streams")
 
-app = FastAPI(title="ARNIX MediaCenter · HDRezka connector", version="2.0.0")
+ARCHIVE_SEARCH = "https://archive.org/advancedsearch.php"
+ARCHIVE_METADATA = "https://archive.org/metadata/{}"
+
+app = FastAPI(
+    title="ARNIX Universal Stream Engine",
+    description="Provider-based search for openly licensed, directly playable media.",
+    version="3.0.0",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,23 +28,99 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "provider": "HDRezka", "client": "HdRezkaApi"}
+    return {
+        "ok": True,
+        "engine": "ARNIX Universal Stream Engine",
+        "providers": ["Internet Archive (openly licensed media only)"],
+    }
 
 
-def checked_title(url: str):
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname != ALLOWED_HOST:
-        raise HTTPException(status_code=400, detail="Недопустимый адрес материала")
-    title = HdRezkaApi(url)
-    if not title.ok:
-        reason = str(title.exception) if title.exception else "страница не распознана"
-        raise HTTPException(status_code=502, detail=f"HDRezka: {reason}")
-    return title
+def _is_openly_licensed(metadata: dict) -> bool:
+    """Only return media whose metadata explicitly declares an open license."""
+    license_url = str(metadata.get("licenseurl") or "").lower()
+    rights = str(metadata.get("rights") or "").lower()
+    return (
+        "creativecommons.org" in license_url
+        or "creativecommons" in rights
+        or "public domain" in rights
+        or "publicdomain" in rights
+    )
 
 
-def get_translators(title):
-    # Library format: {translator_id: {name, premium}}
-    return title.translators or {}
+def _video_files(metadata: dict) -> list[dict]:
+    files = []
+    for item in metadata.get("files") or []:
+        name = str(item.get("name") or "")
+        fmt = str(item.get("format") or "").lower()
+        if not name or name.startswith("__") or item.get("private") == "true":
+            continue
+        if fmt in {"h.264", "h.264 ia", "mpeg4", "mpeg4 (access)", "mpeg4 512kb", "mp4"} or name.lower().endswith(".mp4"):
+            files.append(item)
+    # Prefer MP4/H.264 files with known sizes, larger files first.
+    files.sort(key=lambda f: int(f.get("size") or 0), reverse=True)
+    return files
+
+
+async def _archive_search(client: httpx.AsyncClient, title: str, media_type: str):
+    query = f'title:({title}) AND mediatype:movies'
+    params = {
+        "q": query,
+        "fl[]": ["identifier", "title", "year", "description"],
+        "rows": 12,
+        "page": 1,
+        "output": "json",
+        "sort[]": "downloads desc",
+    }
+    response = await client.get(ARCHIVE_SEARCH, params=params)
+    response.raise_for_status()
+    docs = response.json().get("response", {}).get("docs", [])
+    return docs
+
+
+async def _get_archive_item(client: httpx.AsyncClient, doc: dict):
+    identifier = str(doc.get("identifier") or "")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,120}", identifier):
+        return None
+    response = await client.get(ARCHIVE_METADATA.format(quote(identifier, safe="")))
+    response.raise_for_status()
+    metadata = response.json().get("metadata") or {}
+    if not _is_openly_licensed(metadata):
+        return None
+    files = _video_files(response.json())
+    if not files:
+        return None
+
+    language_value = metadata.get("language") or metadata.get("languages") or ""
+    if isinstance(language_value, list):
+        language_value = " ".join(str(x) for x in language_value)
+    language = str(language_value).lower()
+    if any(x in language for x in ("russian", "рус")):
+        voice_name = "Русская аудиодорожка (если указана в файле)"
+        language_code = "ru"
+    elif any(x in language for x in ("english", "англ")):
+        voice_name = "English audio (if present in file)"
+        language_code = "en"
+    else:
+        voice_name = "Язык не указан в каталоге"
+        language_code = "und"
+
+    file = files[0]
+    filename = str(file.get("name") or "")
+    stream_url = "https://archive.org/download/{}/{}".format(
+        quote(identifier, safe=""),
+        quote(filename, safe="/"),
+    )
+    title = str(metadata.get("title") or doc.get("title") or identifier)
+    return {
+        "id": identifier,
+        "title": title,
+        "year": metadata.get("year") or doc.get("year"),
+        "language": language_code,
+        "voice_name": voice_name,
+        "url": stream_url,
+        "source": "Internet Archive",
+        "license": metadata.get("licenseurl") or metadata.get("rights"),
+    }
 
 
 @app.get("/api/playback")
@@ -48,146 +128,56 @@ async def playback(
     title: str = Query(min_length=1, max_length=180),
     media_type: str = Query(default="movie", alias="type", pattern="^(movie|tv)$"),
 ):
-    """Search HDRezka and return voice/episode choices."""
+    """Search supported providers and return direct stream URLs grouped by language."""
     try:
-        search = HdRezkaSearch(HDREZKA_HOST)
-        found = search(title)
-        if not found:
-            raise HTTPException(status_code=404, detail="На HDRezka ничего не найдено")
+        timeout = httpx.Timeout(18.0, connect=8.0)
+        limits = httpx.Limits(max_connections=12, max_keepalive_connections=6)
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            limits=limits,
+            follow_redirects=True,
+            headers={"User-Agent": "ARNIX-MediaCenter/3.0 (open-media search)"},
+        ) as client:
+            docs = await _archive_search(client, title, media_type)
+            results = await asyncio.gather(
+                *[_get_archive_item(client, doc) for doc in docs[:12]],
+                return_exceptions=True,
+            )
 
-        wanted_type = "tv_series" if media_type == "tv" else "movie"
-        selected = None
-        parsed_errors = []
-        for entry in found[:10]:
-            try:
-                candidate = checked_title(entry["url"])
-                if str(candidate.type) == wanted_type:
-                    selected = (entry, candidate)
-                    break
-            except HTTPException as exc:
-                parsed_errors.append(str(exc.detail))
-                continue
-            except Exception as exc:
-                parsed_errors.append(f"{exc.__class__.__name__}: {exc}")
-                logger.warning("HDRezka parse failed for %s: %s", entry.get("url"), exc)
-                continue
+        items = [x for x in results if isinstance(x, dict)]
+        if not items:
+            return {
+                "title": title,
+                "translations": [],
+                "sources": [],
+                "message": "В подключённом открытом каталоге не найдено видео с явно указанной свободной лицензией. Другие источники можно подключить отдельными адаптерами.",
+            }
 
-        if selected is None:
-            if parsed_errors:
-                raise HTTPException(
-                    status_code=502,
-                    detail="Найденные страницы не удалось открыть: " + " | ".join(parsed_errors[:2]),
-                )
-            raise HTTPException(status_code=404, detail="Подходящий фильм или сериал не найден")
+        groups = {}
+        for item in items:
+            code = item["language"]
+            group = groups.setdefault(code, {
+                "id": code,
+                "name": item["voice_name"],
+                "episodes": [],
+            })
+            group["episodes"].append({
+                "number": len(group["episodes"]) + 1,
+                "title": item["title"] + (f" ({item['year']})" if item.get("year") else ""),
+                "url": item["url"],
+                "source": item["source"],
+                "license": item["license"],
+            })
 
-        entry, item = selected
-        translators = get_translators(item)
-        if not translators:
-            raise HTTPException(status_code=404, detail="У материала нет доступных озвучек")
-
-        translations = []
-        for translator_id, translator in translators.items():
-            translator_name = translator.get("name", str(translator_id)) if isinstance(translator, dict) else str(translator)
-            episodes = []
-            if wanted_type == "movie":
-                params = urlencode({
-                    "post_url": entry["url"],
-                    "translator_id": translator_id,
-                    "kind": "movie",
-                })
-                episodes.append({
-                    "number": 1,
-                    "title": "Фильм",
-                    "url": f"/api/stream?{params}",
-                })
-            else:
-                info = (item.seriesInfo or {}).get(translator_id)
-                if info is None:
-                    info = (item.seriesInfo or {}).get(str(translator_id))
-                if not info:
-                    continue
-                for season_number, episode_numbers in (info.get("episodes") or {}).items():
-                    for episode_number in episode_numbers:
-                        params = urlencode({
-                            "post_url": entry["url"],
-                            "translator_id": translator_id,
-                            "kind": "series",
-                            "season": season_number,
-                            "episode": episode_number,
-                        })
-                        episodes.append({
-                            "number": int(episode_number),
-                            "season": int(season_number),
-                            "title": f"Сезон {season_number} · Серия {episode_number}",
-                            "url": f"/api/stream?{params}",
-                        })
-            if episodes:
-                translations.append({
-                    "id": str(translator_id),
-                    "name": translator_name,
-                    "episodes": episodes,
-                    "post_url": entry["url"],
-                })
-
-        if not translations:
-            raise HTTPException(status_code=404, detail="Не удалось получить серии или озвучки")
-        return {"title": item.name, "translations": translations, "post_url": entry["url"]}
-
-    except HTTPException:
-        raise
+        return {
+            "title": title,
+            "translations": list(groups.values()),
+            "sources": sorted({item["source"] for item in items}),
+            "results_count": len(items),
+        }
+    except httpx.HTTPError as exc:
+        logger.warning("Provider request failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Открытый видеокаталог временно недоступен") from exc
     except Exception as exc:
-        logger.exception("HDRezka search failed")
-        raise HTTPException(
-            status_code=502,
-            detail=f"HdRezkaApi search error: {exc.__class__.__name__}: {exc}",
-        ) from exc
-
-
-@app.get("/api/stream")
-async def stream(
-    post_url: str = Query(min_length=8, max_length=1000),
-    translator_id: int = Query(ge=0),
-    kind: str = Query(pattern="^(movie|series)$"),
-    season: int = Query(default=1, ge=1, le=100),
-    episode: int = Query(default=1, ge=1, le=1000),
-):
-    """Resolve a stream using HdRezkaApi and redirect to its media URL."""
-    try:
-        item = checked_title(post_url)
-        if kind == "movie":
-            media = item.getStream(translation=str(translator_id))
-        else:
-            media = item.getStream(str(season), str(episode), translation=str(translator_id))
-
-        videos = getattr(media, "videos", None) or {}
-        if not videos:
-            raise HTTPException(status_code=404, detail="HDRezka не вернула видеопотоки")
-
-        quality_order = ["1080p Ultra", "1080p", "720p", "480p", "360p"]
-        selected_urls = None
-        for quality in quality_order:
-            for key, urls in videos.items():
-                if quality.lower() in str(key).lower() and urls:
-                    selected_urls = urls
-                    break
-            if selected_urls:
-                break
-        if not selected_urls:
-            selected_urls = next((urls for urls in videos.values() if urls), None)
-        if not selected_urls:
-            raise HTTPException(status_code=404, detail="Ссылки на видео отсутствуют")
-
-        resolved = selected_urls[0] if isinstance(selected_urls, (list, tuple)) else selected_urls
-        parsed = urlparse(str(resolved))
-        if parsed.scheme not in ("https", "http"):
-            raise HTTPException(status_code=502, detail="Источник вернул некорректную ссылку")
-        return RedirectResponse(str(resolved), status_code=307)
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("HDRezka stream resolution failed")
-        raise HTTPException(
-            status_code=502,
-            detail=f"HdRezkaApi stream error: {exc.__class__.__name__}: {exc}",
-        ) from exc
+        logger.exception("Universal search failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка поиска: {exc.__class__.__name__}") from exc
