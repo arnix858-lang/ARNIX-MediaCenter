@@ -145,4 +145,3 @@ async def stream(
             status_code=502,
             detail=f"Не удалось получить поток: {exc.__class__.__name__}: {exc}",
         ) from exc
-}
