@@ -2,12 +2,13 @@ import os
 import logging
 import traceback
 from difflib import SequenceMatcher
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urlparse, quote_plus
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from hdrezka import HDRezkaClient
+from hdrezka.post.page import Page
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("arnix.hdrezka")
