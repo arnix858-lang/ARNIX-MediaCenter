@@ -185,7 +185,7 @@ private fun MenuCard(item: MenuItem, modifier: Modifier = Modifier, wide: Boolea
     }
 }
 
-private data class Movie(
+internal data class Movie(
     val id: Int,
     val mediaType: String,
     val title: String,
@@ -311,13 +311,14 @@ private fun CinemaScreen(onBack: () -> Unit) {
     var movies by remember { mutableStateOf<List<Movie>>(emptyList()) }
     var favorites by remember { mutableStateOf(readFavorites(context)) }
     var selected by remember { mutableStateOf<Movie?>(null) }
+    var playbackPage by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf<MovieDetails?>(null) }
     var detailLoading by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var showWatchInfo by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = selected != null) { selected = null; details = null }
+    BackHandler(enabled = selected != null && !playbackPage) { selected = null; details = null }
     LaunchedEffect(category, search) {
         if (category == 5 && search.isBlank()) {
             movies = favorites
@@ -355,6 +356,10 @@ private fun CinemaScreen(onBack: () -> Unit) {
     }
 
     val current = selected
+    if (playbackPage && current != null) {
+        PlaybackHubScreen(movie = current, onBack = { playbackPage = false })
+        return
+    }
     if (current != null) {
         MovieDetailScreen(
             movie = current,
@@ -367,7 +372,7 @@ private fun CinemaScreen(onBack: () -> Unit) {
                     else listOf(current) + favorites
                 saveFavorites(context, favorites)
             },
-            onWatch = { showWatchInfo = true }
+            onWatch = { playbackPage = true }
         )
         return
     }
