@@ -1,6 +1,6 @@
 import os
 import logging
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -90,10 +90,15 @@ async def playback(
             translator_name = translator.get("name", str(translator_id)) if isinstance(translator, dict) else str(translator)
             episodes = []
             if wanted_type == "movie":
+                params = urlencode({
+                    "post_url": entry["url"],
+                    "translator_id": translator_id,
+                    "kind": "movie",
+                })
                 episodes.append({
                     "number": 1,
                     "title": "Фильм",
-                    "url": "/api/stream",
+                    "url": f"/api/stream?{params}",
                 })
             else:
                 info = (item.seriesInfo or {}).get(translator_id)
@@ -103,11 +108,18 @@ async def playback(
                     continue
                 for season_number, episode_numbers in (info.get("episodes") or {}).items():
                     for episode_number in episode_numbers:
+                        params = urlencode({
+                            "post_url": entry["url"],
+                            "translator_id": translator_id,
+                            "kind": "series",
+                            "season": season_number,
+                            "episode": episode_number,
+                        })
                         episodes.append({
                             "number": int(episode_number),
                             "season": int(season_number),
                             "title": f"Сезон {season_number} · Серия {episode_number}",
-                            "url": "/api/stream",
+                            "url": f"/api/stream?{params}",
                         })
             if episodes:
                 translations.append({
