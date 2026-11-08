@@ -160,7 +160,8 @@ private fun MenuCard(item: MenuItem, modifier: Modifier = Modifier, wide: Boolea
 private data class Movie(val id: Int, val title: String, val overview: String, val poster: String, val date: String, val rating: Double)
 
 private suspend fun tmdb(path: String): JSONObject = withContext(Dispatchers.IO) {
-    val url = URL("https://api.themoviedb.org/3/$path?api_key=$TMDB_KEY&language=ru-RU")
+    val separator = if (path.contains("?")) "&" else "?"
+    val url = URL("https://api.themoviedb.org/3/" + path + separator + "api_key=" + TMDB_KEY + "&language=ru-RU")
     val connection = (url.openConnection() as HttpURLConnection).apply {
         connectTimeout = 15000
         readTimeout = 15000
