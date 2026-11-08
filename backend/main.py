@@ -54,11 +54,35 @@ async def playback(
             player = None
             item = None
             wanted_type = "tv_series" if media_type == "tv" else "movie"
-            for candidate in ranked:
-                candidate_player = await client.player(candidate.url)
+            candidate_errors = []
+            for candidate in ranked[:8]:
+                try:
+                    candidate_player = await client.player(candidate.url)
+                except (TypeError, KeyError, AttributeError) as candidate_exc:
+                    # HDRezka may return a challenge/error page without og:type.
+                    # Skip that result and try the next search match.
+                    candidate_errors.append(
+                        f"{candidate.name}: {candidate_exc.__class__.__name__}"
+                    )
+                    logger.warning(
+                        "Could not parse HDRezka result %s (%s)",
+                        candidate.url,
+                        candidate_exc,
+                    )
+                    continue
                 if candidate_player.post.type == wanted_type:
                     item, player = candidate, candidate_player
                     break
+            if player is None and candidate_errors:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "HDRezka вернула страницу без ожидаемых метаданных "
+                        "(og:type). Возможно, включена защита сайта или "
+                        "сторонние запросы ограничены. Не удалось разобрать "
+                        f"результаты: {'; '.join(candidate_errors[:3])}"
+                    ),
+                )
             if player is None or item is None:
                 raise HTTPException(status_code=404, detail="Подходящий фильм или сериал не найден")
 
