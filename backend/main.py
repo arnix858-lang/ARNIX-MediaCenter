@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from difflib import SequenceMatcher
 from urllib.parse import quote
 
 import httpx
@@ -77,7 +78,18 @@ async def _archive_search(client: httpx.AsyncClient, title: str, media_type: str
     return docs
 
 
-async def _get_archive_item(client: httpx.AsyncClient, doc: dict):
+def _clean_title(value: str) -> str:
+    value = re.sub(r"\\([^)]*\\)|\\[[^]]*\\]", " ", value.lower())
+    value = re.sub(r"[^a-zа-яё0-9]+", " ", value)
+    return re.sub(r"\\s+", " ", value).strip()
+
+
+def _is_relevant_title(requested: str, candidate: str) -> bool:
+    a, b = _clean_title(requested), _clean_title(candidate)
+    return bool(a and b and (a in b or b in a or SequenceMatcher(None, a, b).ratio() >= 0.72))
+
+
+async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_title: str):
     identifier = str(doc.get("identifier") or "")
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,120}", identifier):
         return None
@@ -111,6 +123,8 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict):
         quote(filename, safe="/"),
     )
     title = str(metadata.get("title") or doc.get("title") or identifier)
+    if not _is_relevant_title(requested_title, title):
+        return None
     return {
         "id": identifier,
         "title": title,
@@ -140,11 +154,15 @@ async def playback(
         ) as client:
             docs = await _archive_search(client, title, media_type)
             results = await asyncio.gather(
-                *[_get_archive_item(client, doc) for doc in docs[:12]],
+                *[_get_archive_item(client, doc, title) for doc in docs[:12]],
                 return_exceptions=True,
             )
 
         items = [x for x in results if isinstance(x, dict)]
+        unique = {}
+        for item in items:
+            unique.setdefault(item["url"].split("?", 1)[0].lower(), item)
+        items = list(unique.values())
         if not items:
             return {
                 "title": title,
@@ -174,6 +192,7 @@ async def playback(
             "translations": list(groups.values()),
             "sources": sorted({item["source"] for item in items}),
             "results_count": len(items),
+            "note": "Язык определяется по метаданным каталога и не гарантирует состав аудиодорожек. Код und означает, что язык не подтверждён.",
         }
     except httpx.HTTPError as exc:
         logger.warning("Provider request failed: %s", exc)
