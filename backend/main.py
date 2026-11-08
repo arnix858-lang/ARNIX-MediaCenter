@@ -17,7 +17,7 @@ ARCHIVE_METADATA = "https://archive.org/metadata/{}"
 app = FastAPI(
     title="ARNIX Universal Stream Engine",
     description="Search for openly licensed media with direct playback URLs.",
-    version="3.3.0",
+    version="3.3.1",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -89,32 +89,6 @@ async def _archive_search(client: httpx.AsyncClient, title: str):
     return response.json().get("response", {}).get("docs", [])
 
 
-def _probe_audio_track_language(stream_url: str):
-    """Read container audio-stream language tags without downloading the whole video."""
-    try:
-        import av
-        with av.open(
-            stream_url,
-            mode="r",
-            timeout=(6.0, 8.0),
-            options={"user_agent": "ARNIX-MediaCenter/3.3"},
-        ) as container:
-            audio_streams = list(container.streams.audio)
-            if not audio_streams:
-                return None
-            for stream in audio_streams:
-                tags = {str(k).lower(): str(v).strip().lower()
-                        for k, v in (stream.metadata or {}).items()}
-                language = tags.get("language") or tags.get("lang")
-                if language in {"eng", "en", "english"}:
-                    return "en"
-                if language in {"rus", "ru", "russian"}:
-                    return "ru"
-    except Exception as exc:
-        logger.info("Audio metadata probe unavailable: %s", exc.__class__.__name__)
-    return None
-
-
 async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_title: str):
     identifier = str(doc.get("identifier") or "")
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,120}", identifier):
@@ -149,26 +123,12 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
         or ""
     ).strip().lower()
     filename_lower = filename.lower()
-    audio_evidence = "source_audio_metadata" if audio_language else None
-    if not audio_language:
-        # Inspect audio-stream container tags (when present) as a stronger signal
-        # than the filename. This does not use speech recognition.
-        try:
-            detected = await asyncio.wait_for(
-                asyncio.to_thread(_probe_audio_track_language, stream_url),
-                timeout=10.0,
-            )
-        except asyncio.TimeoutError:
-            detected = None
-        if detected:
-            audio_language = detected
-            audio_evidence = "audio_stream_metadata"
 
     if audio_language in {"russian", "ru", "русский", "русская", "rus"}:
         language_code = "ru"
         language_label = "Русская аудиодорожка (указана источником)"
         language_verified = True
-        language_evidence = audio_evidence
+        language_evidence = "source_audio_metadata"
     elif audio_language in {"english", "en", "английский", "английская", "eng"}:
         language_code = "en"
         language_label = "English audio (указана источником)"
@@ -248,7 +208,7 @@ async def playback(
             timeout=timeout,
             limits=limits,
             follow_redirects=True,
-            headers={"User-Agent": "ARNIX-MediaCenter/3.3 (open-media search)"},
+            headers={"User-Agent": "ARNIX-MediaCenter/3.3.1 (open-media search)"},
         ) as client:
             docs = await _archive_search(client, title)
             results = await asyncio.gather(
