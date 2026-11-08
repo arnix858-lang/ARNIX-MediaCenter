@@ -38,8 +38,17 @@ async def playback(
             items = await client.search(title).get_page(1)
             if not items:
                 raise HTTPException(status_code=404, detail="На HDRezka ничего не найдено")
-            item = max(items, key=lambda x: score_title(title, x.name))
-            player = await client.player(item.url)
+            ranked = sorted(items, key=lambda x: score_title(title, x.name), reverse=True)
+            player = None
+            item = None
+            wanted_type = "tv_series" if type == "tv" else "movie"
+            for candidate in ranked:
+                candidate_player = await client.player(candidate.url)
+                if candidate_player.post.type == wanted_type:
+                    item, player = candidate, candidate_player
+                    break
+            if player is None or item is None:
+                raise HTTPException(status_code=404, detail="Подходящий фильм или сериал не найден")
 
             translators = player.post.translators.name_id
             if not translators:
@@ -90,7 +99,7 @@ async def playback(
     except Exception as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"HDRezka не ответила или ограничила сторонний запрос: {type(exc).__name__}: {exc}",
+            detail=f"HDRezka не ответила или ограничила сторонний запрос: {exc.__class__.__name__}: {exc}",
         ) from exc
 
 
