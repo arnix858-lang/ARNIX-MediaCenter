@@ -38,7 +38,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-private const val PLAYBACK_API_BASE = ""
+private const val PLAYBACK_API_BASE = "https://arnix-hdrezka-api.onrender.com"
 
 private data class PlaybackEpisode(val number: Int, val title: String, val url: String)
 private data class PlaybackVoice(val id: String, val name: String, val episodes: List<PlaybackEpisode>)
@@ -47,7 +47,7 @@ private suspend fun loadPlaybackVoices(movie: Movie): List<PlaybackVoice> = with
     require(PLAYBACK_API_BASE.startsWith("https://") || PLAYBACK_API_BASE.startsWith("http://")) {
         "Источник озвучек ещё не подключён. Нужен адрес API-сервера, который возвращает список озвучек и разрешённые видеопотоки."
     }
-    val query = "tmdb_id=${movie.id}&type=${movie.mediaType}&title=" + URLEncoder.encode(movie.title, "UTF-8")
+    val query = "type=${movie.mediaType}&title=" + URLEncoder.encode(movie.title, "UTF-8")
     val connection = (URL(PLAYBACK_API_BASE.trimEnd('/') + "/api/playback?" + query).openConnection() as HttpURLConnection).apply {
         connectTimeout = 15000
         readTimeout = 20000
@@ -64,14 +64,16 @@ private suspend fun loadPlaybackVoices(movie: Movie): List<PlaybackVoice> = with
             val episodesJson = item.optJSONArray("episodes")
             val episodes = if (episodesJson != null) (0 until episodesJson.length()).mapNotNull { epIndex ->
                 val ep = episodesJson.optJSONObject(epIndex) ?: return@mapNotNull null
-                val streamUrl = ep.optString("url")
+                val rawUrl = ep.optString("url")
+                val streamUrl = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else PLAYBACK_API_BASE.trimEnd('/') + "/" + rawUrl.trimStart('/')
                 if (streamUrl.isBlank()) null else PlaybackEpisode(
                     ep.optInt("number", epIndex + 1),
                     ep.optString("title").ifBlank { "Серия ${ep.optInt("number", epIndex + 1)}" },
                     streamUrl
                 )
             } else {
-                val streamUrl = item.optString("url")
+                val rawUrl = item.optString("url")
+                val streamUrl = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else PLAYBACK_API_BASE.trimEnd('/') + "/" + rawUrl.trimStart('/')
                 if (streamUrl.isBlank()) emptyList() else listOf(PlaybackEpisode(1, "Фильм", streamUrl))
             }
             PlaybackVoice(item.optString("id", index.toString()), item.optString("name").ifBlank { "Озвучка ${index + 1}" }, episodes)
