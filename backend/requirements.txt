@@ -1,3 +1,3 @@
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
-HdRezkaApi>=11.2.3,<12
+httpx>=0.27,<1
