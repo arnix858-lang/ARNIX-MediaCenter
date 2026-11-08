@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("arnix.hdrezka")
 HDREZKA_HOST = os.getenv("HDREZKA_HOST", "https://rezka.ag/").rstrip("/") + "/"
 
-app = FastAPI(title="ARNIX MediaCenter · HDRezka connector", version="1.0.1")
+app = FastAPI(title="ARNIX MediaCenter · HDRezka connector", version="1.0.2")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -40,6 +40,12 @@ async def playback(
     try:
         async with HDRezkaClient(host=HDREZKA_HOST, impersonate=False) as client:
             search = client.search(title)
+            # HDRezka package 5.x Search._concat_paginator returns a string
+            # template instead of the callable expected by Page._request_url.
+            # Override this instance's formatter with a compatible function.
+            search._page_format = lambda page, *args, **kwargs: (
+                f"{search.page.rstrip('/')}&page={page}"
+            )
             items = await search.get_page(1)
             if not items:
                 raise HTTPException(status_code=404, detail="На HDRezka ничего не найдено")
@@ -138,3 +144,4 @@ async def stream(
             status_code=502,
             detail=f"Не удалось получить поток: {exc.__class__.__name__}: {exc}",
         ) from exc
+}
