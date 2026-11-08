@@ -256,7 +256,7 @@ private suspend fun loadMovieDetails(movie: Movie): MovieDetails {
         if (minutes > 0) "${minutes / 60} ч ${minutes % 60} мин" else "Не указано"
     }
     val seasons = if (movie.mediaType == "tv") "${data.optInt("number_of_seasons")} сез., ${data.optInt("number_of_episodes")} сер." else ""
-    MovieDetails(
+    return MovieDetails(
         data.optString("tagline"), genres, runtime, data.optString("status"),
         data.optString("original_title").ifBlank { data.optString("original_name") },
         country, crewNames("Director").ifBlank { crewNames("Director of Photography") },
