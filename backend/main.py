@@ -149,6 +149,7 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
         or ""
     ).strip().lower()
     filename_lower = filename.lower()
+    audio_evidence = "source_audio_metadata" if audio_language else None
     if not audio_language:
         # Inspect audio-stream container tags (when present) as a stronger signal
         # than the filename. This does not use speech recognition.
@@ -161,17 +162,18 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
             detected = None
         if detected:
             audio_language = detected
+            audio_evidence = "audio_stream_metadata"
 
     if audio_language in {"russian", "ru", "русский", "русская", "rus"}:
         language_code = "ru"
         language_label = "Русская аудиодорожка (указана источником)"
         language_verified = True
-        language_evidence = "audio_stream_metadata"
+        language_evidence = audio_evidence
     elif audio_language in {"english", "en", "английский", "английская", "eng"}:
         language_code = "en"
         language_label = "English audio (указана источником)"
         language_verified = True
-        language_evidence = "source_audio_metadata"
+        language_evidence = audio_evidence
     elif re.search(r"(^|[._\s-])(english|eng)([._\s-]|$)", filename_lower):
         language_code = "en"
         language_label = "English (по названию файла; аудиодорожка не проверена)"
