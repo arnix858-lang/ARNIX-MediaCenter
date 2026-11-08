@@ -1,4 +1,6 @@
 import os
+import logging
+import traceback
 from difflib import SequenceMatcher
 from urllib.parse import urlencode, urlparse
 
@@ -7,9 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from hdrezka import HDRezkaClient
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("arnix.hdrezka")
 HDREZKA_HOST = os.getenv("HDREZKA_HOST", "https://rezka.ag/").rstrip("/") + "/"
 
-app = FastAPI(title="ARNIX MediaCenter · HDRezka connector", version="1.0.0")
+app = FastAPI(title="ARNIX MediaCenter · HDRezka connector", version="1.0.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,10 +39,11 @@ async def playback(
     """Find a title and expose its available translation/episode choices."""
     try:
         async with HDRezkaClient(host=HDREZKA_HOST, impersonate=False) as client:
-            items = await client.search(title).get_page(1)
+            search = client.search(title)
+            items = await search.get_page(1)
             if not items:
                 raise HTTPException(status_code=404, detail="На HDRezka ничего не найдено")
-            ranked = sorted(items, key=lambda x: score_title(title, x.name), reverse=True)
+            ranked = sorted(items, key=lambda item: score_title(title, item.name), reverse=True)
             player = None
             item = None
             wanted_type = "tv_series" if type == "tv" else "movie"
@@ -63,11 +68,7 @@ async def playback(
                         "translator_id": translator_id,
                         "kind": "movie",
                     })
-                    episodes.append({
-                        "number": 1,
-                        "title": "Фильм",
-                        "url": f"/api/stream?{params}",
-                    })
+                    episodes.append({"number": 1, "title": "Фильм", "url": f"/api/stream?{params}"})
                 else:
                     seasons = await player.get_episodes(translator_id)
                     for season_number, episode_numbers in seasons.items():
@@ -85,11 +86,7 @@ async def playback(
                                 "url": f"/api/stream?{params}",
                             })
                 if episodes:
-                    result.append({
-                        "id": str(translator_id),
-                        "name": name,
-                        "episodes": episodes,
-                    })
+                    result.append({"id": str(translator_id), "name": name, "episodes": episodes})
 
             if not result:
                 raise HTTPException(status_code=404, detail="Нет доступных серий или озвучек")
@@ -97,9 +94,12 @@ async def playback(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("HDRezka playback lookup failed")
+        trace = traceback.format_exc().strip().splitlines()
+        location = trace[-2] if len(trace) > 1 else "unknown location"
         raise HTTPException(
             status_code=502,
-            detail=f"HDRezka не ответила или ограничила сторонний запрос: {exc.__class__.__name__}: {exc}",
+            detail=f"HDRezka connector error: {exc.__class__.__name__}: {exc}; at {location}",
         ) from exc
 
 
@@ -133,7 +133,8 @@ async def stream(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("HDRezka stream resolution failed")
         raise HTTPException(
             status_code=502,
-            detail=f"Не удалось получить поток: {type(exc).__name__}: {exc}",
+            detail=f"Не удалось получить поток: {exc.__class__.__name__}: {exc}",
         ) from exc
