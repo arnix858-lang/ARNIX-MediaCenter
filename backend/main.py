@@ -129,12 +129,12 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
         language_label = "English audio (указана источником)"
         language_verified = True
         language_evidence = "source_audio_metadata"
-    elif re.search(r"(^|[._\\s-])(english|eng)([._\\s-]|$)", filename_lower):
+    elif re.search(r"(^|[._\s-])(english|eng)([._\s-]|$)", filename_lower):
         language_code = "en"
         language_label = "English (по названию файла; аудиодорожка не проверена)"
         language_verified = False
         language_evidence = "filename_hint"
-    elif re.search(r"(^|[._\\s-])(russian|rus)([._\\s-]|$)", filename_lower):
+    elif re.search(r"(^|[._\s-])(russian|rus)([._\s-]|$)", filename_lower):
         language_code = "ru"
         language_label = "Русский (по названию файла; аудиодорожка не проверена)"
         language_verified = False
