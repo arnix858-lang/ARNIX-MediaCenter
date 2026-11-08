@@ -21,6 +21,8 @@ gradle :app:assembleDebug
 
 ## HDRezka playback connector (optional backend)
 
+[Deploy HDRezka connector to Render](https://render.com/deploy?repo=https://github.com/arnix858-lang/ARNIX-MediaCenter)
+
 The Android client calls `/api/playback` to show available translations and episodes, then opens the selected stream in the built-in ARNIX Media3 player. The connector is an **unofficial** third-party integration and is not an HDRezka-supported public API. Use it only where HDRezka's current terms and applicable law permit third-party clients and playback.
 
 ### Deploy the connector
