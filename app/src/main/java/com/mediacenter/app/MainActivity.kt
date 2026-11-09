@@ -97,9 +97,11 @@ class MainActivity : ComponentActivity() {
                     when (page) {
                         "cinema" -> CinemaScreen(onBack = { page = "home" })
                         "plugins" -> PluginManagerScreen(onBack = { page = "home" })
+                        "lampa" -> LampaScreen(onBack = { page = "home" })
                         else -> HomeScreen(
                             onCinema = { page = "cinema" },
-                            onPlugins = { page = "plugins" }
+                            onPlugins = { page = "plugins" },
+                            onLampa = { page = "lampa" }
                         )
                     }
                 }
@@ -111,11 +113,12 @@ class MainActivity : ComponentActivity() {
 private data class MenuItem(val title: String, val subtitle: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
 
 @Composable
-private fun HomeScreen(onCinema: () -> Unit, onPlugins: () -> Unit) {
+private fun HomeScreen(onCinema: () -> Unit, onPlugins: () -> Unit, onLampa: () -> Unit) {
     val items = listOf(
         MenuItem("ТВ", "Телеканалы", Icons.Rounded.Tv),
         MenuItem("Кинотеатр", "Фильмы и сериалы", Icons.Rounded.Movie),
-        MenuItem("Настройки", "Параметры приложения", Icons.Rounded.Settings)
+        MenuItem("Lampa", "Каталог и плагины Lampa", Icons.Rounded.Movie),
+        MenuItem("Плагины", "Управление источниками", Icons.Rounded.Settings)
     )
     var showHeader by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { showHeader = true }
@@ -139,7 +142,7 @@ private fun HomeScreen(onCinema: () -> Unit, onPlugins: () -> Unit) {
             Spacer(Modifier.height(if (wide) 38.dp else 26.dp))
             if (wide) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    items.forEach { item -> MenuCard(item, Modifier.weight(1f), true) { if (item.title == "Кинотеатр") onCinema() else if (item.title == "Настройки") onPlugins() } }
+                    items.forEach { item -> MenuCard(item, Modifier.weight(1f), true) { when (item.title) { "Кинотеатр" -> onCinema(); "Lampa" -> onLampa(); "Плагины" -> onPlugins() } } }
                 }
             } else {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
