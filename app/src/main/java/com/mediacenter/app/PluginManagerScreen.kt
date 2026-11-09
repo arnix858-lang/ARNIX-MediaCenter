@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -112,9 +113,18 @@ internal fun PluginManagerScreen(onBack: () -> Unit) {
                     settings.domStorageEnabled = true
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
+                    settings.allowFileAccessFromFileURLs = false
+                    settings.allowUniversalAccessFromFileURLs = false
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    settings.javaScriptCanOpenWindowsAutomatically = false
+                    settings.setSupportMultipleWindows(false)
                     webChromeClient = WebChromeClient()
-                    webViewClient = object : WebViewClient() {}
-                    val scripts = urls.joinToString("\n") { "<script src=\"${it.replace("\"", "")}\"></script>" }
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                            return request.isForMainFrame && request.url.host != "lampa.mx"
+                        }
+                    }
+                    val scriptUrls = JSONArray(urls).toString()
                     val html = """
                         <!doctype html><html><head><meta charset="utf-8">
                         <script>
@@ -131,7 +141,18 @@ internal fun PluginManagerScreen(onBack: () -> Unit) {
                           L.Manifest = L.Manifest || {name:'ARNIX MediaCenter',version:'1.0'};
                         })(window.Lampa);
                         window.addEventListener('error',e=>console.error('plugin error',e.message));
-                        </script></head><body>$scripts</body></html>
+                        </script></head><body>
+                        <script>
+                          const pluginUrls = $scriptUrls;
+                          pluginUrls.forEach((src) => {
+                            const script = document.createElement('script');
+                            script.src = src;
+                            script.async = false;
+                            script.onerror = () => console.error('Не удалось загрузить плагин: ' + src);
+                            document.body.appendChild(script);
+                          });
+                        </script>
+                        </body></html>
                     """.trimIndent()
                     loadDataWithBaseURL("https://lampa.mx/", html, "text/html", "UTF-8", null)
                 }
