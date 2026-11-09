@@ -24,7 +24,8 @@ jobs:
         working-directory: upstream-lampa
         run: |
           npm install --no-audit --no-fund
-          npx gulp pack_github
+          printf '\nexports.build_arnix = series(merge, plugins, sass_task, lang_task, sync_github, uglify_task, public_github, write_manifest, index_github);\n' >> gulpfile.js
+          npx gulp build_arnix
           mkdir -p ../app/src/main/assets/lampa
           cp -a build/github/lampa/. ../app/src/main/assets/lampa/
           cp LICENSE ../app/src/main/assets/lampa/LICENSE
