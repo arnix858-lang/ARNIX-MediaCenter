@@ -42,13 +42,50 @@ import java.net.URLEncoder
 private data class PlaybackEpisode(val number: Int, val title: String, val url: String)
 private data class PlaybackVoice(val id: String, val name: String, val episodes: List<PlaybackEpisode>)
 
-private suspend fun loadPlaybackVoices(movie: Movie): List<PlaybackVoice> {
-    // Alloha backend integration was removed. Sources are intended to be provided by installed plugins.
-    return emptyList()
+private suspend fun loadPlaybackVoices(context: android.content.Context, movie: Movie): List<PlaybackVoice> = withContext(Dispatchers.IO) {
+    val base = context.getSharedPreferences("arnix_sources", 0)
+        .getString("api_base", "")?.trim()?.trimEnd('/').orEmpty()
+    require(base.startsWith("https://")) {
+        "Сначала откройте «Источники» и укажите HTTPS-адрес backend ARNIX."
+    }
+    val query = URLEncoder.encode(movie.title, "UTF-8")
+    val connection = (URL("$base/api/lampa/search?q=$query").openConnection() as HttpURLConnection).apply {
+        connectTimeout = 10000
+        readTimeout = 20000
+        requestMethod = "GET"
+        setRequestProperty("Accept", "application/json")
+    }
+    try {
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val body = stream.bufferedReader().use { it.readText() }
+        check(code in 200..299) { "Backend вернул HTTP $code" }
+        val root = JSONObject(body)
+        val groups = root.optJSONArray("results") ?: JSONArray()
+        val voices = mutableListOf<PlaybackVoice>()
+        for (i in 0 until groups.length()) {
+            val group = groups.optJSONObject(i) ?: continue
+            val sourceName = group.optString("source_name").ifBlank { group.optString("source_id") }
+            val rows = group.optJSONArray("results") ?: continue
+            val episodes = mutableListOf<PlaybackEpisode>()
+            for (j in 0 until rows.length()) {
+                val row = rows.optJSONObject(j) ?: continue
+                val streamUrl = row.optString("stream_url")
+                if (!streamUrl.startsWith("https://")) continue
+                val title = row.optString("title").ifBlank { movie.title }
+                episodes += PlaybackEpisode(j + 1, title, streamUrl)
+            }
+            if (episodes.isNotEmpty()) voices += PlaybackVoice(
+                group.optString("source_id", "source-$i"), sourceName, episodes
+            )
+        }
+        voices
+    } finally { connection.disconnect() }
 }
 
 @Composable
 internal fun PlaybackHubScreen(movie: Movie, onBack: () -> Unit) {
+    val context = LocalContext.current
     var voices by remember(movie.key) { mutableStateOf<List<PlaybackVoice>>(emptyList()) }
     var loading by remember(movie.key) { mutableStateOf(true) }
     var error by remember(movie.key) { mutableStateOf("") }
@@ -67,8 +104,8 @@ internal fun PlaybackHubScreen(movie: Movie, onBack: () -> Unit) {
         loading = true
         error = ""
         try {
-            voices = loadPlaybackVoices(movie)
-            if (voices.isEmpty()) error = "Для этого фильма пока нет подключённого источника. Откройте Lampa или установите поддерживаемый плагин."
+            voices = loadPlaybackVoices(context, movie)
+            if (voices.isEmpty()) error = "Источники не вернули прямые HTTPS-видеопотоки для этого фильма. Проверьте настройки backend и адаптеров."
         } catch (e: Exception) { error = e.message ?: "Не удалось загрузить плагины" }
         loading = false
     }
