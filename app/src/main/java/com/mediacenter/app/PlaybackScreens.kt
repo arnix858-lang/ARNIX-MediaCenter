@@ -67,7 +67,9 @@ internal fun PlaybackHubScreen(movie: Movie, onBack: () -> Unit) {
         loading = true
         error = ""
         try {
-            voices = loadPlaybackVoices(movie)\n            if (voices.isEmpty()) error = "Alloha удалена. Поддержка плагинов Lampa пока работает как отдельная среда для загрузки JavaScript; подключение результатов плагинов к каталогу и нативному плееру ещё требует адаптеров."\n        } catch (e: Exception) { error = e.message ?: "Не удалось загрузить плагины" }
+            voices = loadPlaybackVoices(movie)
+            if (voices.isEmpty()) error = "Для этого фильма пока нет подключённого источника. Откройте Lampa или установите поддерживаемый плагин."
+        } catch (e: Exception) { error = e.message ?: "Не удалось загрузить плагины" }
         loading = false
     }
 
