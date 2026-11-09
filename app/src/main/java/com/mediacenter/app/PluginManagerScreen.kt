@@ -1,5 +1,7 @@
 package com.mediacenter.app
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -36,7 +38,7 @@ private const val DEFAULT_SOURCE_API = "https://arnix-hdrezka-api.onrender.com"
 
 private data class NativeSource(val id: String, val name: String)
 private data class NativeSourceItem(
-    val id: String, val title: String, val year: String, val poster: String, val description: String, val source: String
+    val id: String, val title: String, val year: String, val poster: String, val description: String, val source: String, val torrentUrl: String
 )
 
 private fun sourceApi(context: android.content.Context): String =
@@ -82,7 +84,7 @@ private suspend fun searchNativeSources(base: String, query: String): List<Nativ
             found += NativeSourceItem(
                 row.optString("id"), row.optString("title", "Без названия"),
                 row.optString("year"), row.optString("poster"),
-                row.optString("description"), sourceName
+                row.optString("description"), sourceName, row.optString("torrent_url")
             )
         }
     }
@@ -153,6 +155,15 @@ internal fun PluginManagerScreen(onBack: () -> Unit) {
                         Text(item.title + if (item.year.isNotBlank()) " (${item.year})" else "", color = Color.White, fontSize = 14.sp)
                         Text(item.source, color = Color(0xFFAAAAAA), fontSize = 11.sp)
                         if (item.description.isNotBlank()) Text(item.description, color = Color(0xFFBBBBBB), fontSize = 12.sp, maxLines = 3)
+                        if (item.torrentUrl.startsWith("https://")) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("Открыть легальный торрент", color = Color(0xFF8AB4F8), fontSize = 12.sp,
+                                modifier = Modifier.clickable {
+                                    val uri = Uri.parse(item.torrentUrl)
+                                    val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/x-bittorrent")
+                                    runCatching { context.startActivity(Intent.createChooser(intent, "Открыть торрент")) }
+                                }.padding(vertical = 5.dp))
+                        }
                     }
                 }
             } else {
