@@ -47,7 +47,7 @@ private suspend fun loadPlaybackVoices(movie: Movie): List<PlaybackVoice> = with
     require(PLAYBACK_API_BASE.startsWith("https://") || PLAYBACK_API_BASE.startsWith("http://")) {
         "Источник озвучек ещё не подключён. Нужен адрес API-сервера, который возвращает список озвучек и разрешённые видеопотоки."
     }
-    val query = "type=${movie.mediaType}&title=" + URLEncoder.encode(movie.title, "UTF-8")
+    val query = "type=${movie.mediaType}&tmdb=${movie.id}&title=" + URLEncoder.encode(movie.title, "UTF-8")
     val connection = (URL(PLAYBACK_API_BASE.trimEnd('/') + "/api/playback?" + query).openConnection() as HttpURLConnection).apply {
         connectTimeout = 15000
         readTimeout = 20000
