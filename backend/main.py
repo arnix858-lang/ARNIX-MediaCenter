@@ -63,6 +63,13 @@ def archive_search_sync(query: str):
             if not video:
                 continue
             filename = video["name"]
+            torrent_file = next((item for item in files
+                if str(item.get("name", "")).lower().endswith(".torrent")
+                and not item.get("private") and int(item.get("size") or 0) > 0), None)
+            torrent_url = (
+                f"https://archive.org/download/{quote(identifier, safe='')}/{quote(torrent_file['name'], safe='/')}"
+                if torrent_file else None
+            )
             results.append({
                 "id": identifier,
                 "title": meta.get("title") or doc.get("title") or identifier,
@@ -71,6 +78,7 @@ def archive_search_sync(query: str):
                 "poster": f"https://archive.org/services/img/{quote(identifier, safe='')}",
                 "stream_url": f"https://archive.org/download/{quote(identifier, safe='')}/{quote(filename, safe='/')}",
                 "stream_type": "mp4",
+                "torrent_url": torrent_url,
                 "license": license_url,
                 "details": f"https://archive.org/details/{quote(identifier, safe='')}",
             })
@@ -85,14 +93,14 @@ async def health():
         "ok": True,
         "engine": "ARNIX MediaCenter",
         "configured_sources": len(sources["sources"]) + 1,
-        "built_in_sources": ["Internet Archive (openly licensed MP4)"],
+        "built_in_sources": ["Internet Archive (openly licensed MP4 + available torrent files)"],
         "playback": "native Media3 player for direct supported streams",
     }
 
 @app.get("/api/lampa/sources")
 async def lampa_sources():
     configured = await list_sources()
-    return {"sources": configured["sources"] + [{"id": "internet-archive", "name": "Internet Archive — открытая лицензия"}]}
+    return {"sources": configured["sources"] + [{"id": "internet-archive", "name": "Internet Archive — открытая лицензия / торренты"}]}
 
 @app.get("/api/lampa/search")
 async def lampa_search(q: str = Query(min_length=1, max_length=200)):
