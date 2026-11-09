@@ -12,13 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("arnix.streams")
 
-ARCHIVE_SEARCH = "https://archive.org/advancedsearch.php"
-ARCHIVE_METADATA = "https://archive.org/metadata/{}"
 
 app = FastAPI(
-    title="ARNIX Universal Stream Engine",
-    description="Search for openly licensed media with direct playback URLs.",
-    version="3.4.0",
+    title="ARNIX Alloha Playback API",
+    description="Alloha catalogue lookup and safe discovery of openly exposed direct media URLs.",
+    version="4.0.0",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -32,9 +30,9 @@ app.add_middleware(
 async def health():
     return {
         "ok": True,
-        "engine": "ARNIX Universal Stream Engine",
-        "providers": ["Internet Archive", "Alloha (metadata only)"],
-        "supported_media": ["movie"],
+        "engine": "ARNIX Alloha Playback API",
+        "providers": ["Alloha"],
+        "supported_media": ["movie", "tv"],
     }
 
 
@@ -291,80 +289,99 @@ async def _get_archive_item(client: httpx.AsyncClient, doc: dict, requested_titl
 
 @app.get("/api/playback")
 async def playback(
-    title: str = Query(min_length=1, max_length=180),
+    title: str = Query(default="", max_length=180),
     media_type: str = Query(default="movie", alias="type", pattern="^(movie|tv)$"),
+    kp: int | None = Query(default=None, gt=0),
+    tmdb: int | None = Query(default=None, gt=0),
+    translation: str | None = Query(default=None, max_length=32),
 ):
-    if media_type == "tv":
+    """Resolve only direct media URLs explicitly exposed in the Alloha player page."""
+    if kp is None and tmdb is None:
         return {
             "title": title,
             "translations": [],
-            "sources": [],
+            "sources": ["Alloha"],
             "results_count": 0,
-            "message": "В текущем адаптере Internet Archive поиск сериалов и разбиение на сезоны/серии не поддерживаются.",
+            "message": "Для точного поиска Alloha нужен Kinopoisk ID (kp) или TMDB ID (tmdb). По одному названию автоматический выбор записи не выполняется.",
         }
 
+    token = os.getenv("ALLOHA_API_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="ALLOHA_API_TOKEN не настроен в Render")
+
+    params = {"token": token}
+    params["kp" if kp is not None else "tmdb"] = kp if kp is not None else tmdb
     try:
         timeout = httpx.Timeout(18.0, connect=8.0)
-        limits = httpx.Limits(max_connections=12, max_keepalive_connections=6)
-        async with httpx.AsyncClient(
-            timeout=timeout,
-            limits=limits,
-            follow_redirects=True,
-            headers={"User-Agent": "ARNIX-MediaCenter/3.4.0 (open-media search)"},
-        ) as client:
-            docs = await _archive_search(client, title)
-            results = await asyncio.gather(
-                *[_get_archive_item(client, doc, title) for doc in docs[:20]],
-                return_exceptions=True,
-            )
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
+            headers={"User-Agent": "ARNIX-MediaCenter/4.0.0"}) as client:
+            response = await client.get(ALLOHA_API, params=params)
+            response.raise_for_status()
+            payload = response.json()
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if isinstance(data, list):
+                data = data[0] if data else None
+            if not isinstance(data, dict):
+                return {"title": title, "translations": [], "sources": ["Alloha"], "results_count": 0,
+                        "message": "Alloha не нашла фильм по указанному идентификатору."}
 
-        items = [item for item in results if isinstance(item, dict)]
-        if not items:
+            items = data.get("translation_iframe") or {}
+            if isinstance(items, list):
+                items = {str(x.get("id", i)): x for i, x in enumerate(items) if isinstance(x, dict)}
+            if not isinstance(items, dict):
+                items = {}
+            voices = []
+            for voice_id, voice in items.items():
+                if not isinstance(voice, dict):
+                    continue
+                if translation and str(voice_id) != translation:
+                    continue
+                iframe = str(voice.get("iframe") or "")
+                if not iframe:
+                    continue
+                # Inspect the public player document only. Do not execute scripts,
+                # call hidden player APIs, decrypt manifests, or bypass access controls.
+                direct_urls = []
+                try:
+                    page = await client.get(iframe)
+                    if page.status_code == 200 and "text/html" in page.headers.get("content-type", "").lower():
+                        html = page.text[:2_000_000]
+                        candidates = re.findall(r"""https?://[^\\"'<>\\s]+?\\.(?:m3u8|mp4)(?:\\?[^\\"'<>\\s]*)?""", html, flags=re.I)
+                        for candidate in candidates:
+                            candidate = candidate.replace("&amp;", "&")
+                            if candidate not in direct_urls:
+                                direct_urls.append(candidate)
+                except httpx.HTTPError:
+                    pass
+                episodes = []
+                for url in direct_urls[:8]:
+                    # Only expose obvious public MP4/HLS media URLs; no DRM/license endpoints.
+                    if re.search(r"\\.(?:m3u8|mp4)(?:\\?|$)", url, re.I):
+                        episodes.append({"number": len(episodes) + 1, "title": "Прямой поток", "url": url,
+                                         "source": "Alloha", "stream_type": "hls" if ".m3u8" in url.lower() else "progressive"})
+                voices.append({"id": str(voice_id), "name": str(voice.get("name") or voice_id),
+                               "quality": voice.get("quality"), "episodes": episodes,
+                               "iframe_available": True, "direct_stream_available": bool(episodes)})
+            available = [v for v in voices if v["episodes"]]
             return {
-                "title": title,
-                "translations": [],
-                "sources": [],
-                "results_count": 0,
-                "message": "Подходящее видео со свободной лицензией не найдено. Язык дорожки не будет угадываться.",
+                "title": data.get("name") or title,
+                "kp": data.get("id_kp"),
+                "tmdb": data.get("id_tmdb"),
+                "translations": available,
+                "available_translations": [{"id": v["id"], "name": v["name"], "quality": v["quality"],
+                                            "direct_stream_available": v["direct_stream_available"]} for v in voices],
+                "sources": ["Alloha"],
+                "results_count": sum(len(v["episodes"]) for v in available),
+                "iframe_available": bool(voices),
+                "direct_stream_available": bool(available),
+                "message": None if available else "Alloha player page did not expose a direct MP4/M3U8 URL. Protected or script-generated streams are not extracted."
             }
-
-        # Collapse multiple uploads/restorations of the same requested film into one best match.
-        items.sort(
-            key=lambda item: (
-                item["language"] in {"ru", "en"},
-                item["size"],
-                item["downloads"],
-            ),
-            reverse=True,
-        )
-        best = items[0]
-        group = {
-            "id": best["language"],
-            "name": best["language_label"],
-            "episodes": [{
-                "number": 1,
-                "title": best["title"] + (f" ({best['year']})" if best.get("year") else ""),
-                "url": best["url"],
-                "source": best["source"],
-                "license": best["license"],
-                "language_verified": best["language_verified"],
-                "language_evidence": best["language_evidence"],
-            }],
-        }
-        return {
-            "title": title,
-            "translations": [group],
-            "sources": [best["source"]],
-            "results_count": 1,
-            "alternatives_found": max(0, len(items) - 1),
-            "note": "Доступность видеопотока проверяется перед выдачей. Язык определяется по тегу аудиодорожки MP4, если он доступен в заголовке контейнера; иначе используются метаданные источника или неподтверждённая подсказка из имени файла.",
-        }
-    except httpx.HTTPError as exc:
-        logger.warning("Provider request failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Открытый видеокаталог временно недоступен") from exc
-    except Exception as exc:
-        logger.exception("Universal search failed")
-        raise HTTPException(status_code=500, detail=f"Ошибка поиска: {exc.__class__.__name__}") from exc
+    except httpx.HTTPStatusError as exc:
+        logger.warning("Alloha returned HTTP %s", exc.response.status_code)
+        raise HTTPException(status_code=502, detail="Alloha API вернул ошибку HTTP") from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Alloha request failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Не удалось получить ответ Alloha API") from exc
 
 
 ALLOHA_API = "https://api.alloha.tv/"
