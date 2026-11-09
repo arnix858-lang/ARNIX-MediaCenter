@@ -107,7 +107,7 @@ class MainActivity : ComponentActivity() {
 private data class MenuItem(val title: String, val subtitle: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
 
 @Composable
-private fun HomeScreen(onCinema: () -> Unit) {
+private fun HomeScreen(onCinema: () -> Unit, onPlugins: () -> Unit) {
     val items = listOf(
         MenuItem("ТВ", "Телеканалы", Icons.Rounded.Tv),
         MenuItem("Кинотеатр", "Фильмы и сериалы", Icons.Rounded.Movie),
@@ -135,11 +135,11 @@ private fun HomeScreen(onCinema: () -> Unit) {
             Spacer(Modifier.height(if (wide) 38.dp else 26.dp))
             if (wide) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    items.forEach { item -> MenuCard(item, Modifier.weight(1f), true) { if (item.title == "Кинотеатр") onCinema() } }
+                    items.forEach { item -> MenuCard(item, Modifier.weight(1f), true) { if (item.title == "Кинотеатр") onCinema() else if (item.title == "Настройки") onPlugins() } }
                 }
             } else {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    items.forEach { item -> MenuCard(item, Modifier.fillMaxWidth(), false) { if (item.title == "Кинотеатр") onCinema() } }
+                    items.forEach { item -> MenuCard(item, Modifier.fillMaxWidth(), false) { if (item.title == "Кинотеатр") onCinema() else if (item.title == "Настройки") onPlugins() } }
                 }
             }
             Spacer(Modifier.weight(1f))
