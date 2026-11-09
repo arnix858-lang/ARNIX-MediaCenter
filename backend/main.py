@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 from difflib import SequenceMatcher
 from urllib.parse import quote
@@ -32,7 +33,7 @@ async def health():
     return {
         "ok": True,
         "engine": "ARNIX Universal Stream Engine",
-        "providers": ["Internet Archive"],
+        "providers": ["Internet Archive", "Alloha (metadata only)"],
         "supported_media": ["movie"],
     }
 
@@ -364,3 +365,79 @@ async def playback(
     except Exception as exc:
         logger.exception("Universal search failed")
         raise HTTPException(status_code=500, detail=f"Ошибка поиска: {exc.__class__.__name__}") from exc
+
+
+ALLOHA_API = "https://api.alloha.tv/"
+
+
+@app.get("/api/alloha")
+async def alloha_lookup(kp: int = Query(gt=0)):
+    """Return Alloha catalogue metadata; iframe embeds are not direct ExoPlayer streams."""
+    token = os.getenv("ALLOHA_API_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="ALLOHA_API_TOKEN не настроен в Render")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0, connect=7.0),
+            follow_redirects=True,
+            headers={"User-Agent": "ARNIX-MediaCenter/3.5.0"},
+        ) as client:
+            response = await client.get(ALLOHA_API, params={"token": token, "kp": kp})
+            response.raise_for_status()
+            payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(data, list):
+            data = data[0] if data else None
+        if not isinstance(data, dict):
+            return {"kp": kp, "found": False, "provider": "Alloha", "message": "Alloha не вернула запись для этого ID."}
+
+        translation_items = data.get("translation_iframe") or {}
+        translations = []
+        if isinstance(translation_items, dict):
+            for key, item in translation_items.items():
+                if isinstance(item, dict):
+                    translations.append({
+                        "id": str(key),
+                        "name": str(item.get("name") or key),
+                        "quality": item.get("quality"),
+                        "available": bool(item.get("iframe")),
+                    })
+        elif isinstance(translation_items, list):
+            for index, item in enumerate(translation_items):
+                if isinstance(item, dict):
+                    translations.append({
+                        "id": str(item.get("id") or index),
+                        "name": str(item.get("name") or f"Озвучка {index + 1}"),
+                        "quality": item.get("quality"),
+                        "available": bool(item.get("iframe")),
+                    })
+
+        seasons = data.get("seasons") or {}
+        season_summary = []
+        if isinstance(seasons, dict):
+            for season_number, season_data in seasons.items():
+                episodes = season_data.get("episodes", season_data) if isinstance(season_data, dict) else season_data
+                count = len(episodes) if isinstance(episodes, (list, dict)) else 0
+                season_summary.append({"season": str(season_number), "episodes_count": count})
+
+        return {
+            "kp": kp,
+            "found": True,
+            "provider": "Alloha",
+            "title": data.get("name") or data.get("title") or data.get("title_ru"),
+            "year": data.get("year"),
+            "category": data.get("category"),
+            "quality": data.get("quality"),
+            "translation": data.get("translation"),
+            "translations": translations,
+            "seasons": season_summary,
+            "iframe_available": bool(data.get("iframe") or translations),
+            "direct_stream_available": False,
+            "playback_note": "Alloha API возвращает iframe-плеер, а не прямой MP4/M3U8 URL. Встроенный веб-плеер и извлечение защищённого потока не используются.",
+        }
+    except httpx.HTTPStatusError as exc:
+        logger.warning("Alloha returned HTTP %s", exc.response.status_code)
+        raise HTTPException(status_code=502, detail="Alloha API вернул ошибку HTTP") from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Alloha request failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Не удалось получить ответ Alloha API") from exc
