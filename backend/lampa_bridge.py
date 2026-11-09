@@ -71,6 +71,11 @@ def _search_sync(adapter: dict[str, Any], query: str) -> dict[str, Any]:
     for row in rows[:50]:
         if not isinstance(row, dict):
             continue
+        stream_url = str(row.get("stream_url") or row.get("play_url") or "").strip()
+        parsed_stream = urlparse(stream_url) if stream_url else None
+        # Only explicit direct HTTPS media URLs are exposed to the native player.
+        if parsed_stream and (parsed_stream.scheme != "https" or not parsed_stream.hostname):
+            stream_url = ""
         normalized.append({
             "id": str(row.get("id") or row.get("url") or ""),
             "title": str(row.get("title") or row.get("name") or "Без названия"),
@@ -78,6 +83,8 @@ def _search_sync(adapter: dict[str, Any], query: str) -> dict[str, Any]:
             "year": row.get("year"),
             "poster": row.get("poster") or row.get("poster_url"),
             "description": row.get("description") or row.get("overview"),
+            "stream_url": stream_url or None,
+            "stream_type": str(row.get("stream_type") or "").lower() or None,
             "details": row,
         })
     return {"source_id": adapter["id"], "source_name": adapter["name"], "results": normalized}
