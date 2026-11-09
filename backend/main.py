@@ -346,7 +346,7 @@ async def playback(
                     page = await client.get(iframe)
                     if page.status_code == 200 and "text/html" in page.headers.get("content-type", "").lower():
                         html = page.text[:2_000_000]
-                        candidates = re.findall(r"""https?://[^\\"'<>\\s]+?\\.(?:m3u8|mp4)(?:\\?[^\\"'<>\\s]*)?""", html, flags=re.I)
+                        candidates = re.findall(r"""https?://[^"'<>\\s]+?\.(?:m3u8|mp4)(?:\?[^"'<>\\s]*)?""", html, flags=re.I)
                         for candidate in candidates:
                             candidate = candidate.replace("&amp;", "&")
                             if candidate not in direct_urls:
@@ -356,7 +356,7 @@ async def playback(
                 episodes = []
                 for url in direct_urls[:8]:
                     # Only expose obvious public MP4/HLS media URLs; no DRM/license endpoints.
-                    if re.search(r"\\.(?:m3u8|mp4)(?:\\?|$)", url, re.I):
+                    if re.search(r"\.(?:m3u8|mp4)(?:\?|$)", url, re.I):
                         episodes.append({"number": len(episodes) + 1, "title": "Прямой поток", "url": url,
                                          "source": "Alloha", "stream_type": "hls" if ".m3u8" in url.lower() else "progressive"})
                 voices.append({"id": str(voice_id), "name": str(voice.get("name") or voice_id),
