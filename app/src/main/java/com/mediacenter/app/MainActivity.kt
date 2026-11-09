@@ -96,7 +96,11 @@ class MainActivity : ComponentActivity() {
                     BackHandler(enabled = page != "home") { page = "home" }
                     when (page) {
                         "cinema" -> CinemaScreen(onBack = { page = "home" })
-                        else -> HomeScreen(onCinema = { page = "cinema" })
+                        "plugins" -> PluginManagerScreen(onBack = { page = "home" })
+                        else -> HomeScreen(
+                            onCinema = { page = "cinema" },
+                            onPlugins = { page = "plugins" }
+                        )
                     }
                 }
             }
