@@ -8,6 +8,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -61,11 +62,17 @@ internal fun LampaRuntimeHost(onBack: () -> Unit) {
             textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 13.sp),
             singleLine = true
         )
-        Text("Подключить runtime", color = Color.White,
+        Text("Подключить runtime", color = Color.White, fontSize = 13.sp,
             modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
-                .background(Color(0xFF303030)).padding(12.dp)
-                .then(Modifier), fontSize = 13.sp)
-        androidx.compose.foundation.clickable(enabled = true) { }.let { }
+                .background(Color(0xFF303030)).clickable {
+                    val candidate = runtimeUrl.trim()
+                    val uri = runCatching { Uri.parse(candidate) }.getOrNull()
+                    if (uri?.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
+                        prefs.edit().putString("lampa_runtime_url", candidate).apply()
+                        activeUrl = candidate
+                        status = "Подключение к $candidate"
+                    } else status = "Нужен корректный HTTPS URL без логина и пароля."
+                }.padding(12.dp))
         Text(status, color = Color.LightGray, fontSize = 12.sp)
         Text(lastEvent, color = Color(0xFFB8B8B8), fontSize = 11.sp,
             modifier = Modifier.padding(vertical = 6.dp))
