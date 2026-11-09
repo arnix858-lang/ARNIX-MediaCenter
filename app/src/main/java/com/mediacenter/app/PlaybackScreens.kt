@@ -39,57 +39,12 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-private const val PLAYBACK_API_BASE = "https://arnix-hdrezka-api.onrender.com"
-
 private data class PlaybackEpisode(val number: Int, val title: String, val url: String)
 private data class PlaybackVoice(val id: String, val name: String, val episodes: List<PlaybackEpisode>)
 
-private suspend fun loadPlaybackVoices(movie: Movie): List<PlaybackVoice> = withContext(Dispatchers.IO) {
-    require(PLAYBACK_API_BASE.startsWith("https://") || PLAYBACK_API_BASE.startsWith("http://")) {
-        "Источник озвучек ещё не подключён. Нужен адрес API-сервера, который возвращает список озвучек и разрешённые видеопотоки."
-    }
-    val query = "type=${movie.mediaType}&tmdb=${movie.id}&title=" + URLEncoder.encode(movie.title, "UTF-8")
-    val connection = (URL(PLAYBACK_API_BASE.trimEnd('/') + "/api/playback?" + query).openConnection() as HttpURLConnection).apply {
-        connectTimeout = 15000
-        readTimeout = 20000
-        requestMethod = "GET"
-    }
-    try {
-        val code = connection.responseCode
-        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-        val body = stream.bufferedReader().use { it.readText() }
-        if (code !in 200..299) error("Сервер источника ответил: HTTP $code")
-        val payload = JSONObject(body)
-        val array = payload.optJSONArray("translations")
-        if (array == null || array.length() == 0) {
-            val message = payload.optString("message").ifBlank {
-                val available = payload.optJSONArray("available_translations")
-                if (available != null && available.length() > 0)
-                    "Alloha нашла озвучки, но отдаёт только iframe. Прямой видеопоток для Media3 не предоставлен."
-                else "Alloha не вернула доступные озвучки."
-            }
-            error(message)
-        }
-        (0 until array.length()).mapNotNull { index ->
-            val item = array.optJSONObject(index) ?: return@mapNotNull null
-            val episodesJson = item.optJSONArray("episodes")
-            val episodes = if (episodesJson != null) (0 until episodesJson.length()).mapNotNull { epIndex ->
-                val ep = episodesJson.optJSONObject(epIndex) ?: return@mapNotNull null
-                val rawUrl = ep.optString("url")
-                val streamUrl = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else PLAYBACK_API_BASE.trimEnd('/') + "/" + rawUrl.trimStart('/')
-                if (streamUrl.isBlank()) null else PlaybackEpisode(
-                    ep.optInt("number", epIndex + 1),
-                    ep.optString("title").ifBlank { "Серия ${ep.optInt("number", epIndex + 1)}" },
-                    streamUrl
-                )
-            } else {
-                val rawUrl = item.optString("url")
-                val streamUrl = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else PLAYBACK_API_BASE.trimEnd('/') + "/" + rawUrl.trimStart('/')
-                if (streamUrl.isBlank()) emptyList() else listOf(PlaybackEpisode(1, "Фильм", streamUrl))
-            }
-            PlaybackVoice(item.optString("id", index.toString()), item.optString("name").ifBlank { "Озвучка ${index + 1}" }, episodes)
-        }.filter { it.episodes.isNotEmpty() }
-    } finally { connection.disconnect() }
+private suspend fun loadPlaybackVoices(movie: Movie): List<PlaybackVoice> {
+    // Alloha backend integration was removed. Sources are intended to be provided by installed plugins.
+    return emptyList()
 }
 
 @Composable
@@ -111,7 +66,7 @@ internal fun PlaybackHubScreen(movie: Movie, onBack: () -> Unit) {
     LaunchedEffect(movie.key) {
         loading = true
         error = ""
-        try { voices = loadPlaybackVoices(movie) } catch (e: Exception) { error = e.message ?: "Не удалось загрузить озвучки" }
+        try { voices = loadPlaybackVoices(movie) } catch (e: Exception) { error = e.message ?: "Не удалось загрузить плагины" }
         loading = false
     }
 
@@ -133,9 +88,9 @@ internal fun PlaybackHubScreen(movie: Movie, onBack: () -> Unit) {
         }
         Spacer(Modifier.height(18.dp))
         when {
-            loading -> Text("Загружаем доступные озвучки…", color = Color.LightGray)
+            loading -> Text("Проверяем подключённые источники…", color = Color.LightGray)
             error.isNotBlank() -> {
-                Text("Не удалось получить озвучки", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Нет подключённого источника", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 Text(error, color = Color(0xFFAAAAAA), fontSize = 13.sp)
             }
