@@ -33,3 +33,27 @@ The Android client calls `/api/playback` to show available translations and epis
 4. The Android app is configured for that hostname. If Render assigns a different hostname, update `PLAYBACK_API_BASE` in `PlaybackScreens.kt` and rebuild the APK.
 
 The connector uses the ordinary HTTP client mode (`impersonate=False)); it does not implement Cloudflare challenge bypasses, geo-block circumvention, account sharing, or premium restrictions. HDRezka may deny third-party requests or change its site at any time. A Render free service may sleep when idle, so the first request can take longer.
+
+
+## Native Lampa-compatible source bridge
+
+The backend exposes a normalized JSON contract for the native Android UI:
+
+- `GET /api/lampa/sources` — configured adapters.
+- `GET /api/lampa/search?q=...` — normalized search results grouped by source.
+- `GET /health` — service status and configured source count.
+
+Configure adapters on the backend using the `ARNIX_LAMPA_ADAPTERS` environment variable. It is a JSON array; each entry has `id`, `name`, and an HTTPS `search_url` containing the literal `{query}` placeholder. The remote endpoint must return either a JSON array or an object with a `results` array. Each item should contain `id`, `title`, and optional `original_title`, `year`, `poster`, and `description`.
+
+Example (replace the host with an adapter endpoint you operate):
+```json
+[
+  {
+    "id": "my-source",
+    "name": "My source",
+    "search_url": "https://media.example/api/search?q={query}"
+  }
+]
+```
+
+**Compatibility boundary:** this bridge does not execute arbitrary Lampa JavaScript plugins and does not claim full compatibility with every Lampa plugin. Lampa UI plugins require the original Lampa runtime; native ARNIX screens consume only normalized source data. Add adapters only for sources you are authorized to use. Direct HLS/DASH/MP4 links can be handed to the native Media3 player; DRM-protected streams are not bypassed.
