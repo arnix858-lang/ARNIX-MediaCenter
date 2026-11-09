@@ -14,6 +14,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Checkout original Lampa source
+        uses: actions/checkout@v4
+        with:
+          repository: yumata/lampa-source
+          ref: main
+          path: upstream-lampa
+      - name: Build original Lampa web runtime
+        working-directory: upstream-lampa
+        run: |
+          npm install --no-audit --no-fund
+          npx gulp pack_github
+          mkdir -p ../app/src/main/assets/lampa
+          cp -a build/github/lampa/. ../app/src/main/assets/lampa/
+          cp LICENSE ../app/src/main/assets/lampa/LICENSE
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
