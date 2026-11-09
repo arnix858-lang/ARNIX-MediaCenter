@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
 import android.graphics.Bitmap
@@ -44,7 +45,7 @@ internal fun LampaScreen(onBack: () -> Unit) {
             }) { Icon(Icons.Rounded.ArrowBack, "Назад", tint = Color.White) }
             Column(Modifier.weight(1f)) {
                 Text(pageTitle, color = Color.White, maxLines = 1)
-                Text(if (loading) "Загрузка Lampa…" else "Lampa • веб-клиент", color = Color.LightGray, fontSize = androidx.compose.ui.unit.sp(11))
+                Text(if (loading) "Загрузка Lampa…" else "Lampa • веб-клиент", color = Color.LightGray, fontSize = 11.sp)
             }
             IconButton(onClick = { webView?.reload() }) {
                 Icon(Icons.Rounded.Refresh, "Обновить", tint = Color.White)
