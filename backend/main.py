@@ -6,6 +6,7 @@ from difflib import SequenceMatcher
 from urllib.parse import quote
 
 import httpx
+from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -346,7 +347,18 @@ async def playback(
                     page = await client.get(iframe)
                     if page.status_code == 200 and "text/html" in page.headers.get("content-type", "").lower():
                         html = page.text[:2_000_000]
-                        candidates = re.findall(r"""https?://[^"'<>\\s]+?\.(?:m3u8|mp4)(?:\?[^"'<>\\s]*)?""", html, flags=re.I)
+                        soup = BeautifulSoup(html, "html.parser")
+                        # Read only media URLs explicitly present in public HTML markup.
+                        # This does not execute JavaScript or attempt to unlock protected streams.
+                        for node in soup.select("video[src], video source[src], source[src], a[href]"):
+                            candidate = str(node.get("src") or node.get("href") or "").strip()
+                            if candidate and candidate not in direct_urls:
+                                from urllib.parse import urljoin
+                                candidate = urljoin(str(page.url), candidate)
+                                if re.search(r"\\.(?:m3u8|mp4)(?:\\?|$)", candidate, re.I) and candidate not in direct_urls:
+                                    direct_urls.append(candidate)
+                        # Some providers publish a direct URL as plain text in their HTML.
+                        candidates = re.findall(r"""https?://[^"'<>\\s]+?\\.(?:m3u8|mp4)(?:\\?[^"'<>\\s]*)?""", html, flags=re.I)
                         for candidate in candidates:
                             candidate = candidate.replace("&amp;", "&")
                             if candidate not in direct_urls:
