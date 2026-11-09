@@ -66,7 +66,7 @@ internal fun PlaybackHubScreen(movie: Movie, onBack: () -> Unit) {
     LaunchedEffect(movie.key) {
         loading = true
         error = ""
-        try { voices = loadPlaybackVoices(movie) } catch (e: Exception) { error = e.message ?: "Не удалось загрузить плагины" }
+        try {\n            voices = loadPlaybackVoices(movie)\n            if (voices.isEmpty()) error = "Alloha удалена. Поддержка плагинов Lampa пока работает как отдельная среда для загрузки JavaScript; подключение результатов плагинов к каталогу и нативному плееру ещё требует адаптеров."\n        } catch (e: Exception) { error = e.message ?: "Не удалось загрузить плагины" }
         loading = false
     }
 
