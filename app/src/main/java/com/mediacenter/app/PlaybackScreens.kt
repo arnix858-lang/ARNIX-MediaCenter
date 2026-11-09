@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -58,7 +59,17 @@ private suspend fun loadPlaybackVoices(movie: Movie): List<PlaybackVoice> = with
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
         val body = stream.bufferedReader().use { it.readText() }
         if (code !in 200..299) error("Сервер источника ответил: HTTP $code")
-        val array = JSONObject(body).optJSONArray("translations") ?: error("Сервер не вернул список озвучек")
+        val payload = JSONObject(body)
+        val array = payload.optJSONArray("translations")
+        if (array == null || array.length() == 0) {
+            val message = payload.optString("message").ifBlank {
+                val available = payload.optJSONArray("available_translations")
+                if (available != null && available.length() > 0)
+                    "Alloha нашла озвучки, но отдаёт только iframe. Прямой видеопоток для Media3 не предоставлен."
+                else "Alloha не вернула доступные озвучки."
+            }
+            error(message)
+        }
         (0 until array.length()).mapNotNull { index ->
             val item = array.optJSONObject(index) ?: return@mapNotNull null
             val episodesJson = item.optJSONArray("episodes")
@@ -167,7 +178,14 @@ private fun ArnixPlayerScreen(title: String, voiceName: String, episode: Playbac
     val context = LocalContext.current
     val player = remember(episode.url) {
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(episode.url))
+            val lowerUrl = episode.url.lowercase()
+            val itemBuilder = MediaItem.Builder().setUri(episode.url)
+            when {
+                ".m3u8" in lowerUrl -> itemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8)
+                ".mpd" in lowerUrl -> itemBuilder.setMimeType(MimeTypes.APPLICATION_MPD)
+                ".mp4" in lowerUrl -> itemBuilder.setMimeType(MimeTypes.VIDEO_MP4)
+            }
+            setMediaItem(itemBuilder.build())
             prepare()
             playWhenReady = true
         }
