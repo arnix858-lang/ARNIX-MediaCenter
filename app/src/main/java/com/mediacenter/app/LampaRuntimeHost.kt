@@ -30,8 +30,7 @@ import org.json.JSONObject
 private val RuntimeBg = Color(0xFF080808)
 
 /**
- * Hosts a user-supplied, HTTPS-served Lampa runtime. This does not bundle Lampa
- * source code; it provides a constrained WebView host and an explicit native bridge.
+ * Hosts the bundled or user-supplied Lampa runtime and installs the Z01 online plugin.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -53,7 +52,7 @@ internal fun LampaRuntimeHost(onBack: () -> Unit) {
             IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Назад", tint = Color.White) }
             Column(Modifier.weight(1f)) {
                 Text("LAMPA RUNTIME", color = Color.White, fontSize = 18.sp)
-                Text("Внешний оригинальный runtime + мост ARNIX", color = Color.LightGray, fontSize = 11.sp)
+                Text("Lampa Runtime • Z01 Online • мост ARNIX", color = Color.LightGray, fontSize = 11.sp)
             }
         }
         androidx.compose.foundation.text.BasicTextField(
@@ -123,7 +122,7 @@ internal fun LampaRuntimeHost(onBack: () -> Unit) {
                             }
 
                             override fun onPageFinished(view: WebView, url: String?) {
-                                status = "Runtime загружен. Ожидание событий от подключённых плагинов."
+                                status = "Runtime загружен. Подключаю Z01…"
                                 val bridge = """
                                     (function(){
                                       if(window.ArnixNative) return;
@@ -136,6 +135,15 @@ internal fun LampaRuntimeHost(onBack: () -> Unit) {
                                         }
                                       };
                                       window.dispatchEvent(new CustomEvent('arnixnative', {detail: window.ArnixNative}));
+                                      if (!window.__arnixZ01Requested) {
+                                        window.__arnixZ01Requested = true;
+                                        var z01 = document.createElement('script');
+                                        z01.src = 'http://z01.online/live';
+                                        z01.async = true;
+                                        z01.onload = function(){ console.log('ARNIX: Z01 plugin loaded'); };
+                                        z01.onerror = function(){ console.warn('ARNIX: Z01 plugin failed to load'); };
+                                        (document.head || document.documentElement).appendChild(z01);
+                                      }
                                     })();
                                 """.trimIndent()
                                 view.evaluateJavascript(bridge, null)
@@ -150,9 +158,9 @@ internal fun LampaRuntimeHost(onBack: () -> Unit) {
         } else {
             Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Text("Оригинальная Lampa Runtime", color = Color.White, fontSize = 17.sp)
+                Text("Оригинальная Lampa Runtime + Z01", color = Color.White, fontSize = 17.sp)
                 Spacer(Modifier.height(8.dp))
-                Text("В APK добавляется официальная сборка Lampa из yumata/lampa-source. Оставьте поле адреса пустым и нажмите кнопку запуска. Для запуска удалённой сборки укажите HTTPS URL. Плагины исполняются в среде Lampa; интеграция их UI в Compose не автоматическая.",
+                Text("После запуска ARNIX автоматически загружает онлайн-плагин Z01 (z01.online/live) в среду Lampa. Оставьте поле адреса пустым для встроенной Lampa. Для удалённого экземпляра укажите HTTPS URL. Сторонний сервер Z01 должен быть доступен из вашей сети.",
                     color = Color.LightGray, fontSize = 13.sp)
             }
         }
