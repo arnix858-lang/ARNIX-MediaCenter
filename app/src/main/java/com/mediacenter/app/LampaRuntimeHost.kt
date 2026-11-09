@@ -62,16 +62,21 @@ internal fun LampaRuntimeHost(onBack: () -> Unit) {
             textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 13.sp),
             singleLine = true
         )
-        Text("Подключить runtime", color = Color.White, fontSize = 13.sp,
+        Text("Запустить встроенную Lampa", color = Color.White, fontSize = 13.sp,
             modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
                 .background(Color(0xFF303030)).clickable {
                     val candidate = runtimeUrl.trim()
-                    val uri = runCatching { Uri.parse(candidate) }.getOrNull()
-                    if (uri?.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
-                        prefs.edit().putString("lampa_runtime_url", candidate).apply()
-                        activeUrl = candidate
-                        status = "Подключение к $candidate"
-                    } else status = "Нужен корректный HTTPS URL без логина и пароля."
+                    if (candidate.isBlank()) {
+                        activeUrl = "file:///android_asset/lampa/index.html"
+                        status = "Запуск встроенной оригинальной Lampa."
+                    } else {
+                        val uri = runCatching { Uri.parse(candidate) }.getOrNull()
+                        if (uri?.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
+                            prefs.edit().putString("lampa_runtime_url", candidate).apply()
+                            activeUrl = candidate
+                            status = "Подключение к $candidate"
+                        } else status = "Нужен корректный HTTPS URL без логина и пароля."
+                    }
                 }.padding(12.dp))
         Text(status, color = Color.LightGray, fontSize = 12.sp)
         Text(lastEvent, color = Color(0xFFB8B8B8), fontSize = 11.sp,
@@ -83,7 +88,9 @@ internal fun LampaRuntimeHost(onBack: () -> Unit) {
                     WebView(ctx).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
-                        settings.allowFileAccess = false
+                        settings.allowFileAccess = activeUrl.startsWith("file:///android_asset/lampa/")
+                        settings.allowFileAccessFromFileURLs = false
+                        settings.allowUniversalAccessFromFileURLs = false
                         settings.allowContentAccess = false
                         settings.javaScriptCanOpenWindowsAutomatically = false
                         settings.setSupportMultipleWindows(false)
@@ -102,8 +109,10 @@ internal fun LampaRuntimeHost(onBack: () -> Unit) {
                                     }.onFailure { lastEvent = "Некорректное сообщение моста" }
                                     return true
                                 }
-                                if (uri.scheme != "https" || uri.host != Uri.parse(activeUrl).host) {
-                                    status = "Переход заблокирован: разрешён только HTTPS-хост runtime."
+                                val localAsset = activeUrl.startsWith("file:///android_asset/lampa/") && uri.scheme == "file" && uri.path?.startsWith("/android_asset/lampa/") == true
+                                val sameHttpsHost = uri.scheme == "https" && uri.host == Uri.parse(activeUrl).host
+                                if (!localAsset && !sameHttpsHost) {
+                                    status = "Переход заблокирован: разрешён только текущий runtime."
                                     return true
                                 }
                                 return false
@@ -141,9 +150,9 @@ internal fun LampaRuntimeHost(onBack: () -> Unit) {
         } else {
             Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Text("Оригинальный runtime не встроен в APK", color = Color.White, fontSize = 17.sp)
+                Text("Оригинальная Lampa Runtime", color = Color.White, fontSize = 17.sp)
                 Spacer(Modifier.height(8.dp))
-                Text("Укажите адрес HTTPS-размещения Lampa, которым вы вправе пользоваться. После загрузки плагины выполняются внутри его настоящей среды; поддержка нативных действий ARNIX требует вызовов window.ArnixNative.postMessage(...).",
+                Text("В APK добавляется официальная сборка Lampa из yumata/lampa-source. Оставьте поле адреса пустым и нажмите кнопку запуска. Для запуска удалённой сборки укажите HTTPS URL. Плагины исполняются в среде Lampa; интеграция их UI в Compose не автоматическая.",
                     color = Color.LightGray, fontSize = 13.sp)
             }
         }
